@@ -1,7 +1,15 @@
 import { supabase } from './supabase';
-import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown } from '../types';
+import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole } from '../types';
 
 // --- MOCK DATA FALLBACKS ---
+
+const MOCK_USERS: AppUser[] = [
+    { id: 1, username: 'admin', role: UserRole.ADMIN, full_name: 'Mock Admin' },
+    { id: 2, username: 'unit', role: UserRole.SUB_UNIT, full_name: 'Mock Unit Head' },
+    { id: 3, username: 'mat', role: UserRole.MATERIALS, full_name: 'Mock Materials' },
+    { id: 4, username: 'stock', role: UserRole.INVENTORY, full_name: 'Mock Stock Mgr' },
+    { id: 5, username: 'qc', role: UserRole.QC, full_name: 'Mock QC Officer' },
+];
 
 const MOCK_UNITS: Unit[] = [
   { id: 1, name: 'Main HQ (Branch 1)', is_main: true },
@@ -39,6 +47,35 @@ let MOCK_BARCODES: Barcode[] = [
   { id: 'b2', barcode_serial: 'ORD-10001;ST-500;L;100002', order_id: '1', style_number: 'ST-500', size: 'L', status: BarcodeStatus.PUSHED_OUT_OF_SUBUNIT },
   { id: 'b3', barcode_serial: 'ORD-10001;ST-500;S;100003', order_id: '1', style_number: 'ST-500', size: 'S', status: BarcodeStatus.GENERATED },
 ];
+
+// --- AUTHENTICATION ---
+
+export const authenticateUser = async (username: string, password: string): Promise<AppUser | null> => {
+    // Try Supabase first
+    const { data, error } = await supabase
+        .from('app_users')
+        .select('*')
+        .eq('username', username)
+        .eq('password', password) // Basic plaintext check as requested
+        .single();
+
+    if (error || !data) {
+        console.warn("Auth Failed / Using Mock", error?.message);
+        // Fallback for demo if DB isn't set up yet
+        if (password === 'demo') {
+             const mock = MOCK_USERS.find(u => u.username === username);
+             if (mock) return mock;
+        }
+        return null;
+    }
+
+    return {
+        id: data.id,
+        username: data.username,
+        role: data.role as UserRole,
+        full_name: data.full_name
+    };
+};
 
 // --- API FUNCTIONS ---
 

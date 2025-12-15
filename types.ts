@@ -7,6 +7,13 @@ export enum UserRole {
   SALES = 'SALES'
 }
 
+export interface AppUser {
+  id: string | number;
+  username: string;
+  role: UserRole;
+  full_name: string;
+}
+
 export enum OrderStatus {
   ASSIGNED = 'ASSIGNED',
   STARTED = 'STARTED',

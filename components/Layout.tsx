@@ -1,6 +1,6 @@
 import React, { useState, createContext, useContext, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { UserRole } from '../types';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { UserRole, AppUser } from '../types';
 import { 
   LayoutDashboard, 
   Factory, 
@@ -11,22 +11,51 @@ import {
   LogOut, 
   Menu,
   X,
-  Layers
+  Layers,
+  UserCircle
 } from 'lucide-react';
 
 interface AuthContextType {
-  role: UserRole;
-  setRole: (role: UserRole) => void;
-  user: string;
+  isAuthenticated: boolean;
+  user: AppUser | null;
+  login: (user: AppUser) => void;
+  logout: () => void;
 }
 
-const AuthContext = createContext<AuthContextType>({ role: UserRole.ADMIN, setRole: () => {}, user: 'Demo User' });
+const AuthContext = createContext<AuthContextType>({ 
+  isAuthenticated: false, 
+  user: null, 
+  login: () => {}, 
+  logout: () => {} 
+});
+
 export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [role, setRole] = useState<UserRole>(UserRole.ADMIN);
+  const [user, setUser] = useState<AppUser | null>(null);
+  const navigate = useNavigate();
+
+  // Check for stored session on load
+  useEffect(() => {
+    const stored = localStorage.getItem('tintura_user');
+    if (stored) {
+      setUser(JSON.parse(stored));
+    }
+  }, []);
+
+  const login = (userData: AppUser) => {
+    setUser(userData);
+    localStorage.setItem('tintura_user', JSON.stringify(userData));
+  };
+
+  const logout = () => {
+    setUser(null);
+    localStorage.removeItem('tintura_user');
+    navigate('/login');
+  };
+
   return (
-    <AuthContext.Provider value={{ role, setRole, user: 'Demo User' }}>
+    <AuthContext.Provider value={{ isAuthenticated: !!user, user, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -52,11 +81,17 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ to, icon, label, active }) =>
 );
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { role, setRole, user } = useAuth();
+  const { user, logout, isAuthenticated } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const navItems = [
+  // If not authenticated, we don't render the layout (the wrapper in App.tsx handles redirect)
+  if (!isAuthenticated || !user) {
+    return <>{children}</>;
+  }
+
+  // Define All Routes
+  const allNavItems = [
     { role: UserRole.ADMIN, to: '/', icon: <LayoutDashboard size={20} />, label: 'Admin HQ' },
     { role: UserRole.SUB_UNIT, to: '/subunit', icon: <Factory size={20} />, label: 'Sub-Unit Ops' },
     { role: UserRole.MATERIALS, to: '/materials', icon: <Archive size={20} />, label: 'Materials' },
@@ -65,27 +100,45 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     { role: UserRole.SALES, to: '/sales', icon: <ShoppingCart size={20} />, label: 'Sales & POS' },
   ];
 
+  // Filter based on Role
+  const navItems = allNavItems.filter(item => {
+    if (user.role === UserRole.ADMIN) return true; // Admin sees all
+    
+    // Inventory role sees Inventory AND Sales
+    if (user.role === UserRole.INVENTORY) {
+        return item.role === UserRole.INVENTORY || item.role === UserRole.SALES;
+    }
+
+    // Sub Unit role sees Subunit Ops, Inventory, AND Sales
+    if (user.role === UserRole.SUB_UNIT) {
+        return item.role === UserRole.SUB_UNIT || item.role === UserRole.INVENTORY || item.role === UserRole.SALES;
+    }
+
+    // Others see only their specific page (QC sees QC, Materials sees Materials)
+    return item.role === user.role;
+  });
+
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-slate-900">
       {/* Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white transform transition-transform duration-300 ease-in-out ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0`}>
-        <div className="flex items-center justify-between p-6 border-b border-slate-800">
-          {/* NEW LOGO DESIGN */}
-          <div className="flex items-center gap-3">
-             <div className="bg-gradient-to-br from-indigo-500 to-cyan-500 p-2 rounded-lg text-white shadow-lg shadow-indigo-900/50">
-                <Layers size={24} strokeWidth={2.5} />
-             </div>
-             <div>
-                <h1 className="text-xl font-bold leading-none tracking-tight text-white">
-                  Tintura <span className="text-indigo-400">SST</span>
-                </h1>
-                <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Smart System</span>
-             </div>
+        <div className="flex flex-col p-6 border-b border-slate-800">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-3">
+                <div className="bg-gradient-to-br from-indigo-500 to-cyan-500 p-2 rounded-lg text-white shadow-lg shadow-indigo-900/50">
+                    <Layers size={24} strokeWidth={2.5} />
+                </div>
+                <div>
+                    <h1 className="text-xl font-bold leading-none tracking-tight text-white">
+                    Tintura <span className="text-indigo-400">SST</span>
+                    </h1>
+                </div>
+            </div>
+            <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-slate-400">
+                <X size={24} />
+            </button>
           </div>
-          
-          <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-slate-400">
-            <X size={24} />
-          </button>
+          <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold ml-1">A Product of LSR</p>
         </div>
 
         <nav className="p-4 space-y-1">
@@ -101,27 +154,22 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         </nav>
 
         <div className="absolute bottom-0 w-full p-4 border-t border-slate-800 bg-slate-900">
-          <div className="mb-4">
-             <label className="text-xs text-slate-500 uppercase font-semibold">Switch Role (Demo)</label>
-             <select 
-               className="w-full mt-1 bg-slate-800 text-slate-200 text-sm rounded border-none p-2 focus:ring-1 focus:ring-indigo-500"
-               value={role}
-               onChange={(e) => setRole(e.target.value as UserRole)}
-             >
-               {Object.values(UserRole).map(r => (
-                 <option key={r} value={r}>{r}</option>
-               ))}
-             </select>
-          </div>
-          <div className="flex items-center space-x-3 text-slate-400">
-             <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold">
-               {user.charAt(0)}
+          <div className="flex items-center space-x-3 text-slate-400 mb-4">
+             <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-indigo-400 border border-slate-700">
+               <UserCircle size={24}/>
              </div>
-             <div className="text-sm">
-               <p className="text-white">{user}</p>
-               <p className="text-xs capitalize">{role.toLowerCase().replace('_', ' ')}</p>
+             <div className="text-sm overflow-hidden">
+               <p className="text-white font-bold truncate">{user.full_name || user.username}</p>
+               <p className="text-xs text-indigo-400 capitalize">{user.role.replace(/_/g, ' ').toLowerCase()}</p>
              </div>
           </div>
+          
+          <button 
+            onClick={logout}
+            className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2 rounded-lg transition-colors text-sm font-medium"
+          >
+            <LogOut size={16}/> Sign Out
+          </button>
         </div>
       </aside>
 
