@@ -69,7 +69,7 @@ export const MaterialsDashboard: React.FC = () => {
             </head>
             <body>
                 <div class="header">
-                    TINTURA MES<br/>
+                    TINTURA SST<br/>
                     MATERIAL APPROVAL
                 </div>
                 <div class="meta">

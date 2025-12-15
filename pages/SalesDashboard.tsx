@@ -100,7 +100,7 @@ export const SalesDashboard: React.FC = () => {
                 </head>
                 <body>
                     <div class="header">
-                        <div class="title">TINTURA FASHION</div>
+                        <div class="title">TINTURA SST</div>
                         <div>Manufacturing & Retail</div>
                     </div>
                     

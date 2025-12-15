@@ -1,5 +1,5 @@
 {
-  "name": "Tintura MES Windows app",
+  "name": "Tintura SST Windows app",
   "description": "AI-enabled Manufacturing Execution System with Inventory, Sales, and FSM tracking.",
   "requestFramePermissions": [
     "camera"

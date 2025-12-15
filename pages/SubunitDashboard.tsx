@@ -199,7 +199,7 @@ export const SubunitDashboard: React.FC = () => {
     if (win) {
         const labelsHtml = newBarcodes.map(b => `
             <div class="label">
-                <div class="header">TINTURA FASHION</div>
+                <div class="header">TINTURA SST</div>
                 <div class="meta">
                     <strong>Style:</strong> ${b.style_number} &nbsp; 
                     <strong>Size:</strong> ${b.size}

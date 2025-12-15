@@ -1,5 +1,5 @@
 {
-  "name": "tintura-mes",
+  "name": "tintura-sst",
   "version": "1.0.0",
   "main": "electron.js",
   "type": "module",
@@ -29,8 +29,8 @@
     "vite": "^5.1.4"
   },
   "build": {
-    "appId": "com.tintura.mes",
-    "productName": "Tintura MES",
+    "appId": "com.tintura.sst",
+    "productName": "Tintura SST",
     "directories": {
       "output": "release"
     },

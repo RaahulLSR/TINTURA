@@ -10,7 +10,8 @@ import {
   Archive, 
   LogOut, 
   Menu,
-  X
+  X,
+  Layers
 } from 'lucide-react';
 
 interface AuthContextType {
@@ -69,7 +70,19 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       {/* Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white transform transition-transform duration-300 ease-in-out ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0`}>
         <div className="flex items-center justify-between p-6 border-b border-slate-800">
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">Tintura</h1>
+          {/* NEW LOGO DESIGN */}
+          <div className="flex items-center gap-3">
+             <div className="bg-gradient-to-br from-indigo-500 to-cyan-500 p-2 rounded-lg text-white shadow-lg shadow-indigo-900/50">
+                <Layers size={24} strokeWidth={2.5} />
+             </div>
+             <div>
+                <h1 className="text-xl font-bold leading-none tracking-tight text-white">
+                  Tintura <span className="text-indigo-400">SST</span>
+                </h1>
+                <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Smart System</span>
+             </div>
+          </div>
+          
           <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-slate-400">
             <X size={24} />
           </button>
@@ -118,7 +131,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
             <button onClick={() => setMobileMenuOpen(true)} className="text-slate-600">
                <Menu size={24} />
             </button>
-            <span className="font-bold text-slate-800">Tintura MES</span>
+            <span className="font-bold text-slate-800 flex items-center gap-2">
+                <Layers size={18} className="text-indigo-600"/> Tintura SST
+            </span>
             <div className="w-6" /> 
         </header>
 
