@@ -557,6 +557,15 @@ export const addFabricLot = async (lot: Partial<FabricLot>) => {
     return data;
 };
 
+export const updateFabricLot = async (id: number, updates: Partial<FabricLot>) => {
+    const { error } = await supabase.from('fabric_lots').update(updates).eq('id', id);
+    
+    if (error) {
+        console.warn("Update Fabric Failed (Using Mock):", error.message);
+        MOCK_FABRIC_LOTS = MOCK_FABRIC_LOTS.map(f => f.id === id ? { ...f, ...updates } : f);
+    }
+};
+
 export const logFabricUsage = async (
     lotId: number, 
     usedKg: number, 

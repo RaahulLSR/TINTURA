@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState } from 'react';
-import { fetchOrders, updateOrderStatus, generateBarcodes, createMaterialRequest, fetchMaterialRequests, uploadOrderAttachment, addOrderLog, fetchOrderLogs, updateMaterialRequest, deleteMaterialRequest, fetchFabricLots, addFabricLot, logFabricUsage, updateFabricLotPlan, fetchFabricLogs } from '../services/db';
+import { fetchOrders, updateOrderStatus, generateBarcodes, createMaterialRequest, fetchMaterialRequests, uploadOrderAttachment, addOrderLog, fetchOrderLogs, updateMaterialRequest, deleteMaterialRequest, fetchFabricLots, addFabricLot, updateFabricLot, logFabricUsage, updateFabricLotPlan, fetchFabricLogs } from '../services/db';
 import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog, Attachment, MaterialStatus, FabricLot, FabricUsageLog } from '../types';
 import { StatusBadge, BulkActionToolbar } from '../components/Widgets';
-import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, X, Eye, CheckCircle2, History, ListTodo, Archive, FileText, Download, Plus, Trash2, Paperclip, Calculator, Clock, MessageSquare, Send, Search, ArrowLeftRight, Minimize2, Maximize2, Pencil, Filter, ChevronRight, ChevronDown, ChevronUp, Layers, PenLine, RotateCcw, PlusCircle } from 'lucide-react';
+import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, X, Eye, CheckCircle2, History, ListTodo, Archive, FileText, Download, Plus, Trash2, Paperclip, Calculator, Clock, MessageSquare, Send, Search, ArrowLeftRight, Minimize2, Maximize2, Pencil, Filter, ChevronRight, ChevronDown, ChevronUp, Layers, PenLine, RotateCcw, PlusCircle, ClipboardList } from 'lucide-react';
 
 // Hardcoded ID for this specific Subunit Dashboard instance
 const CURRENT_UNIT_ID = 2; // Sewing Unit A
@@ -59,6 +59,8 @@ export const SubunitDashboard: React.FC = () => {
   const [selectedFabricLot, setSelectedFabricLot] = useState<FabricLot | null>(null);
   const [fabricLogs, setFabricLogs] = useState<FabricUsageLog[]>([]);
   const [showFabricHistory, setShowFabricHistory] = useState(false);
+  const [editingFabricLotId, setEditingFabricLotId] = useState<number | null>(null);
+  const [showFabricSummary, setShowFabricSummary] = useState(false);
 
   const [newFabricLot, setNewFabricLot] = useState<Partial<FabricLot>>({
       date: new Date().toISOString().split('T')[0],
@@ -167,10 +169,28 @@ export const SubunitDashboard: React.FC = () => {
   };
 
   // --- FABRIC HANDLERS ---
-  const handleAddFabricLot = async (e: React.FormEvent) => {
+  const handleSaveFabricLot = async (e: React.FormEvent) => {
       e.preventDefault();
-      await addFabricLot(newFabricLot);
+      
+      if (editingFabricLotId) {
+          await updateFabricLot(editingFabricLotId, newFabricLot);
+      } else {
+          await addFabricLot(newFabricLot);
+      }
+      
+      handleCloseFabricModal();
+      loadFabricData();
+  };
+
+  const handleEditFabricLot = (lot: FabricLot) => {
+      setEditingFabricLotId(lot.id);
+      setNewFabricLot(lot);
+      setFabricModalOpen(true);
+  };
+
+  const handleCloseFabricModal = () => {
       setFabricModalOpen(false);
+      setEditingFabricLotId(null);
       setNewFabricLot({
         date: new Date().toISOString().split('T')[0],
         dc_no: '',
@@ -183,7 +203,6 @@ export const SubunitDashboard: React.FC = () => {
         plan_to: '',
         review_notes: ''
       });
-      loadFabricData();
   };
 
   const handleOpenUsageModal = (lot: FabricLot) => {
@@ -222,6 +241,131 @@ export const SubunitDashboard: React.FC = () => {
       const logs = await fetchFabricLogs(lot.id);
       setFabricLogs(logs);
       setShowFabricHistory(true);
+  };
+
+  // PRINT: Fabric History Log
+  const handlePrintFabricHistory = () => {
+      if (!selectedFabricLot || !fabricLogs) return;
+
+      const rows = fabricLogs.map(log => `
+        <tr>
+            <td>${new Date(log.date_time).toLocaleString()}</td>
+            <td>${log.order_style_ref}</td>
+            <td>${log.remarks || '-'}</td>
+            <td style="text-align:right; font-weight:bold;">${log.used_kg.toFixed(2)} KG</td>
+        </tr>
+      `).join('');
+
+      const win = window.open('', 'FabricHistory', 'width=800,height=600');
+      if (win) {
+          win.document.write(`
+            <html>
+            <head>
+                <title>Fabric Usage Log - ${selectedFabricLot.lot_no}</title>
+                <style>
+                    body { font-family: 'Courier New', monospace; padding: 20px; font-size: 13px; }
+                    .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 10px; margin-bottom: 20px; }
+                    .meta { margin-bottom: 20px; font-weight: bold; }
+                    table { width: 100%; border-collapse: collapse; }
+                    th { border-bottom: 1px solid #000; text-align: left; padding: 5px; }
+                    td { border-bottom: 1px dashed #ccc; padding: 5px; }
+                    .footer { text-align: center; margin-top: 30px; font-size: 11px; }
+                    .totals { text-align: right; margin-top: 20px; font-size: 14px; font-weight: bold; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h2>TINTURA SST - FABRIC USAGE LOG</h2>
+                </div>
+                <div class="meta">
+                    LOT NO: ${selectedFabricLot.lot_no}<br/>
+                    COLOR: ${selectedFabricLot.fabric_color} | DIA: ${selectedFabricLot.dia}<br/>
+                    INITIAL WEIGHT: ${selectedFabricLot.total_kg} KG<br/>
+                    DATE: ${new Date().toLocaleString()}
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date/Time</th>
+                            <th>Order Ref</th>
+                            <th>Remarks</th>
+                            <th style="text-align:right;">Used Qty</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                <div class="totals">
+                    TOTAL USED: ${selectedFabricLot.used_fabric?.toFixed(2)} KG<br/>
+                    BALANCE REMAINING: ${selectedFabricLot.balance_fabric?.toFixed(2)} KG
+                </div>
+                <div class="footer">System Generated Report</div>
+                <script>window.onload = () => { setTimeout(() => window.print(), 500); }</script>
+            </body>
+            </html>
+          `);
+          win.document.close();
+      }
+  };
+
+  // PRINT: Fabric Stock Summary
+  const handlePrintStockSummary = () => {
+      const rows = fabricLots.map(lot => `
+        <tr>
+            <td>${lot.date}</td>
+            <td>${lot.lot_no}</td>
+            <td>${lot.fabric_color}</td>
+            <td>${lot.dia}</td>
+            <td>${lot.roll_count}</td>
+            <td style="text-align:right;">${lot.total_kg}</td>
+            <td style="text-align:right; font-weight:bold;">${(lot.balance_fabric ?? lot.total_kg).toFixed(2)}</td>
+        </tr>
+      `).join('');
+
+      const totalBalance = fabricLots.reduce((acc, lot) => acc + (lot.balance_fabric ?? lot.total_kg), 0);
+
+      const win = window.open('', 'FabricStock', 'width=1000,height=800');
+      if (win) {
+          win.document.write(`
+            <html>
+            <head>
+                <title>Fabric Stock Summary</title>
+                <style>
+                    body { font-family: 'Courier New', monospace; padding: 20px; font-size: 12px; }
+                    .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+                    table { width: 100%; border-collapse: collapse; }
+                    th { background: #eee; padding: 5px; border: 1px solid #000; text-align: left; }
+                    td { padding: 5px; border: 1px solid #ccc; }
+                    .total-row { font-size: 16px; font-weight: bold; text-align: right; margin-top: 15px; padding-top: 10px; border-top: 2px solid #000; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>FABRIC INVENTORY SUMMARY</h1>
+                    <p>Printed: ${new Date().toLocaleString()}</p>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Arrival Date</th>
+                            <th>Lot No</th>
+                            <th>Color</th>
+                            <th>Dia</th>
+                            <th>Rolls</th>
+                            <th style="text-align:right;">Total KG</th>
+                            <th style="text-align:right;">Balance KG</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                <div class="total-row">
+                    TOTAL FABRIC BALANCE: ${totalBalance.toFixed(2)} KG
+                </div>
+                <script>window.onload = () => { setTimeout(() => window.print(), 500); }</script>
+            </body>
+            </html>
+          `);
+          win.document.close();
+      }
   };
 
   // --- Timeline Logic ---
@@ -961,12 +1105,20 @@ export const SubunitDashboard: React.FC = () => {
           <div className="space-y-4 animate-fade-in">
               <div className="flex justify-between items-center">
                   <h3 className="text-lg font-bold text-slate-900">Fabric Inventory Lots</h3>
-                  <button 
-                      onClick={() => setFabricModalOpen(true)}
-                      className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-indigo-700 shadow-sm"
-                  >
-                      <PlusCircle size={18}/> New Fabric Lot
-                  </button>
+                  <div className="flex gap-2">
+                      <button 
+                          onClick={() => setShowFabricSummary(true)}
+                          className="bg-white border border-slate-300 text-slate-900 px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-slate-50 shadow-sm"
+                      >
+                          <ClipboardList size={18}/> Stock Summary
+                      </button>
+                      <button 
+                          onClick={() => setFabricModalOpen(true)}
+                          className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-indigo-700 shadow-sm"
+                      >
+                          <PlusCircle size={18}/> New Fabric Lot
+                      </button>
+                  </div>
               </div>
 
               <div className="bg-white rounded-xl shadow-sm border border-slate-300 overflow-hidden overflow-x-auto">
@@ -1021,6 +1173,13 @@ export const SubunitDashboard: React.FC = () => {
                                           </div>
                                       </td>
                                       <td className="p-4 text-right flex justify-end gap-2">
+                                          <button 
+                                              onClick={() => handleEditFabricLot(lot)}
+                                              className="bg-white border border-slate-400 hover:bg-slate-100 text-indigo-700 px-2 py-1.5 rounded"
+                                              title="Edit Entry"
+                                          >
+                                              <Pencil size={16}/>
+                                          </button>
                                           <button 
                                               onClick={() => handleOpenUsageModal(lot)}
                                               className="bg-white border border-slate-400 hover:bg-slate-100 text-slate-900 px-3 py-1.5 rounded text-xs font-bold"
@@ -1193,10 +1352,10 @@ export const SubunitDashboard: React.FC = () => {
           <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-scale-up">
                   <div className="p-6 border-b flex justify-between items-center bg-indigo-50">
-                      <h3 className="text-xl font-bold text-indigo-900">Add New Fabric Lot</h3>
-                      <button onClick={() => setFabricModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
+                      <h3 className="text-xl font-bold text-indigo-900">{editingFabricLotId ? 'Edit Fabric Lot' : 'Add New Fabric Lot'}</h3>
+                      <button onClick={handleCloseFabricModal} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
                   </div>
-                  <form onSubmit={handleAddFabricLot} className="p-6 space-y-4">
+                  <form onSubmit={handleSaveFabricLot} className="p-6 space-y-4">
                       <div className="grid grid-cols-2 gap-4">
                           <div>
                               <label className="block text-sm font-bold text-slate-800 mb-1">Arrival Date</label>
@@ -1244,8 +1403,8 @@ export const SubunitDashboard: React.FC = () => {
                           <textarea className="w-full border border-slate-300 rounded p-2 bg-white text-black" rows={2} value={newFabricLot.review_notes} onChange={e => setNewFabricLot({...newFabricLot, review_notes: e.target.value})} />
                       </div>
                       <div className="pt-4 border-t flex justify-end gap-2">
-                          <button type="button" onClick={() => setFabricModalOpen(false)} className="px-4 py-2 text-slate-900 bg-white border border-slate-300 hover:bg-slate-50 rounded font-bold">Cancel</button>
-                          <button type="submit" className="px-6 py-2 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 shadow">Save Lot</button>
+                          <button type="button" onClick={handleCloseFabricModal} className="px-4 py-2 text-slate-900 bg-white border border-slate-300 hover:bg-slate-50 rounded font-bold">Cancel</button>
+                          <button type="submit" className="px-6 py-2 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 shadow">{editingFabricLotId ? 'Update Lot' : 'Save Lot'}</button>
                       </div>
                   </form>
               </div>
@@ -1300,6 +1459,57 @@ export const SubunitDashboard: React.FC = () => {
           </div>
       )}
 
+      {/* FABRIC SUMMARY MODAL */}
+      {showFabricSummary && (
+          <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[85vh] flex flex-col">
+                  <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+                      <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                          <ClipboardList size={20}/> Current Fabric Stock Summary
+                      </h3>
+                      <button onClick={() => setShowFabricSummary(false)} className="text-slate-500 hover:text-slate-800"><X size={24}/></button>
+                  </div>
+                  <div className="flex-1 overflow-auto p-4">
+                      <table className="w-full text-left text-sm">
+                          <thead className="bg-slate-100 text-slate-900 uppercase font-bold text-xs sticky top-0">
+                              <tr>
+                                  <th className="p-3">Arrival</th>
+                                  <th className="p-3">Lot No</th>
+                                  <th className="p-3">Color</th>
+                                  <th className="p-3">Dia</th>
+                                  <th className="p-3">Rolls</th>
+                                  <th className="p-3 text-right">Total KG</th>
+                                  <th className="p-3 text-right">Balance KG</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200">
+                              {fabricLots.filter(l => (l.balance_fabric ?? l.total_kg) > 0).map(lot => (
+                                  <tr key={lot.id}>
+                                      <td className="p-3 text-slate-900">{lot.date}</td>
+                                      <td className="p-3 font-bold text-slate-900">{lot.lot_no}</td>
+                                      <td className="p-3 text-slate-900">{lot.fabric_color}</td>
+                                      <td className="p-3 text-slate-900">{lot.dia}</td>
+                                      <td className="p-3 text-slate-900">{lot.roll_count}</td>
+                                      <td className="p-3 text-right font-mono text-slate-600">{lot.total_kg}</td>
+                                      <td className="p-3 text-right font-mono font-bold text-green-700">{(lot.balance_fabric ?? lot.total_kg).toFixed(2)}</td>
+                                  </tr>
+                              ))}
+                          </tbody>
+                      </table>
+                  </div>
+                  <div className="p-4 bg-slate-50 text-right border-t flex justify-end gap-2">
+                      <button 
+                          onClick={handlePrintStockSummary}
+                          className="bg-indigo-600 text-white px-4 py-2 rounded font-bold hover:bg-indigo-700 flex items-center gap-2"
+                      >
+                          <Printer size={16}/> Print Report
+                      </button>
+                      <button onClick={() => setShowFabricSummary(false)} className="bg-white border border-slate-300 text-slate-900 px-4 py-2 rounded font-bold hover:bg-slate-100">Close</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* FABRIC HISTORY MODAL */}
       {showFabricHistory && selectedFabricLot && (
           <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
@@ -1333,6 +1543,14 @@ export const SubunitDashboard: React.FC = () => {
                               {fabricLogs.length === 0 && <tr><td colSpan={4} className="p-4 text-center text-slate-800">No usage recorded yet.</td></tr>}
                           </tbody>
                       </table>
+                  </div>
+                  <div className="p-4 border-t bg-slate-50 flex justify-end">
+                      <button 
+                          onClick={handlePrintFabricHistory}
+                          className="bg-indigo-600 text-white px-4 py-2 rounded font-bold hover:bg-indigo-700 flex items-center gap-2"
+                      >
+                          <Printer size={16}/> Print Log
+                      </button>
                   </div>
               </div>
           </div>
