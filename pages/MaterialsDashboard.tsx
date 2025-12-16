@@ -65,15 +65,11 @@ export const MaterialsDashboard: React.FC = () => {
 
   const getUnitName = (unitId: number) => units.find(u => u.id === unitId)?.name || 'Unknown Unit';
 
-  // --- Printing & Approval Logic ---
+  // --- Printing Logic ---
 
+  // 1. Single Item History Receipt
   const printReceipt = async (req: MaterialRequest, orderNo: string) => {
-    // 1. Fetch detailed history
     const approvals = await fetchMaterialApprovals(req.id);
-    
-    // 2. Generate Rows
-    // We use the 'req' object passed in for the final totals to ensure accuracy
-    // even if the fetch hasn't fully propagated yet in the backend/mock.
     let runningTotal = 0;
     const rowsHtml = approvals.map(app => {
         runningTotal += app.qty_approved;
@@ -105,49 +101,140 @@ export const MaterialsDashboard: React.FC = () => {
                 </style>
             </head>
             <body>
-                <div class="header">
-                    TINTURA SST<br/>
-                    MATERIAL LOG
-                </div>
+                <div class="header">TINTURA SST<br/>MATERIAL LOG</div>
                 <div class="meta">
                     Print Date: ${new Date().toLocaleString()}<br/>
                     Order Ref: ${orderNo}<br/>
                     Item: ${req.material_content}<br/>
                     Req ID: ${req.id}
                 </div>
-                
                 <div style="text-align:left; font-weight:bold; margin-bottom:5px;">APPROVAL HISTORY:</div>
                 <table>
-                    <thead>
-                        <tr>
-                            <th style="text-align:left">Date/Time</th>
-                            <th style="text-align:right">Qty</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${rowsHtml || '<tr><td colspan="2" style="text-align:center; padding:10px;">-- Update Pending --</td></tr>'}
-                    </tbody>
+                    <thead><tr><th style="text-align:left">Date/Time</th><th style="text-align:right">Qty</th></tr></thead>
+                    <tbody>${rowsHtml || '<tr><td colspan="2" style="text-align:center; padding:10px;">-- Update Pending --</td></tr>'}</tbody>
                 </table>
-
                 <div class="summary">
                     <div>TOTAL REQUESTED: ${req.quantity_requested} ${req.unit || 'Nos'}</div>
                     <div>TOTAL APPROVED: ${req.quantity_approved}</div>
                     <div style="margin-top:5px; font-size:1.1em;">REMAINING: ${remaining}</div>
                 </div>
-
-                <div class="footer">
-                    Status: ${req.status}<br/>
-                    Issued By System
-                </div>
-                <script>
-                    window.print();
-                    setTimeout(() => window.close(), 500);
-                </script>
+                <div class="footer">Status: ${req.status}<br/>Issued By System</div>
+                <script>window.print(); setTimeout(() => window.close(), 500);</script>
             </body>
             </html>
         `);
         win.document.close();
     }
+  };
+
+  // 2. Full Order 2-Page Receipt
+  const handlePrintOrderSummary = (order: Order, reqs: MaterialRequest[]) => {
+      const win = window.open('', 'OrderReceipt', 'width=1000,height=800');
+      if (win) {
+          const page1Rows = reqs.map((req, idx) => `
+            <tr>
+                <td style="text-align:center;">${idx + 1}</td>
+                <td>${req.material_content}</td>
+                <td style="text-align:center;">${req.unit || 'Nos'}</td>
+                <td style="text-align:right; font-weight:bold;">${req.quantity_requested}</td>
+            </tr>
+          `).join('');
+
+          const page2Rows = reqs.map((req, idx) => {
+              const balance = req.quantity_requested - req.quantity_approved;
+              return `
+                <tr>
+                    <td style="text-align:center;">${idx + 1}</td>
+                    <td>${req.material_content}</td>
+                    <td style="text-align:right;">${req.quantity_requested}</td>
+                    <td style="text-align:right; font-weight:bold; color:green;">${req.quantity_approved}</td>
+                    <td style="text-align:right; font-weight:bold; color:${balance > 0 ? 'red' : 'black'};">${balance}</td>
+                    <td style="text-align:center; font-size:10px; text-transform:uppercase;">${req.status.replace('_', ' ')}</td>
+                </tr>
+              `;
+          }).join('');
+
+          const headerHTML = `
+            <div class="header">
+                <div class="brand">TINTURA SST</div>
+                <div class="title">ACCESSORIES REQUIREMENT RECEIPT</div>
+                <div class="meta">
+                    <strong>ORDER NO:</strong> ${order.order_no} &nbsp;|&nbsp; 
+                    <strong>STYLE:</strong> ${order.style_number} &nbsp;|&nbsp; 
+                    <strong>DATE:</strong> ${new Date().toLocaleDateString()}
+                </div>
+            </div>
+          `;
+
+          win.document.write(`
+            <html>
+            <head>
+                <title>Accessories Receipt - ${order.order_no}</title>
+                <style>
+                    @media print { 
+                        .page-break { page-break-before: always; } 
+                        body { -webkit-print-color-adjust: exact; }
+                    }
+                    body { font-family: 'Arial', sans-serif; padding: 40px; color: #333; }
+                    .header { text-align: center; border-bottom: 2px solid #000; margin-bottom: 20px; padding-bottom: 10px; }
+                    .brand { font-size: 24px; font-weight: 900; margin-bottom: 5px; }
+                    .title { font-size: 18px; font-weight: bold; text-transform: uppercase; margin-bottom: 10px; }
+                    .meta { font-size: 12px; background: #eee; padding: 5px; }
+                    .page-title { font-size: 14px; font-weight: bold; text-transform: uppercase; margin-bottom: 10px; text-align:left; border-left: 5px solid #000; padding-left: 10px; }
+                    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; }
+                    th, td { border: 1px solid #ccc; padding: 8px; }
+                    th { background: #f4f4f4; text-transform: uppercase; }
+                </style>
+            </head>
+            <body>
+                <!-- PAGE 1 -->
+                ${headerHTML}
+                <div class="page-title">Page 1: Request Sheet</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th width="50">S.No</th>
+                            <th>Material Description</th>
+                            <th width="80">Unit</th>
+                            <th width="100" style="text-align:right">Total Requested</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${page1Rows}
+                    </tbody>
+                </table>
+                <div style="text-align:center; font-size:10px; margin-top:20px;">-- Verified By Production --</div>
+
+                <div class="page-break"></div>
+
+                <!-- PAGE 2 -->
+                ${headerHTML}
+                <div class="page-title">Page 2: Approval & Balance Sheet</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th width="50">S.No</th>
+                            <th>Material Description</th>
+                            <th width="80" style="text-align:right">Req</th>
+                            <th width="80" style="text-align:right">Approved</th>
+                            <th width="80" style="text-align:right">Balance</th>
+                            <th width="100">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${page2Rows}
+                    </tbody>
+                </table>
+                <div style="text-align:center; font-size:10px; margin-top:20px;">-- Approved By Materials Dept --</div>
+
+                <script>
+                    window.onload = () => { setTimeout(() => window.print(), 500); };
+                </script>
+            </body>
+            </html>
+          `);
+          win.document.close();
+      }
   };
 
   const handleApprove = async () => {
@@ -223,10 +310,9 @@ export const MaterialsDashboard: React.FC = () => {
                     <div key={orderId} className={`bg-white rounded-xl shadow-sm border transition-all ${hasPending ? 'border-indigo-200' : 'border-slate-200'}`}>
                         {/* Order Header */}
                         <div 
-                            onClick={() => toggleOrder(orderId)}
-                            className={`p-4 flex items-center justify-between cursor-pointer hover:bg-slate-50 rounded-t-xl transition-colors ${isExpanded ? 'border-b border-slate-100' : ''}`}
+                            className={`p-4 flex items-center justify-between hover:bg-slate-50 rounded-t-xl transition-colors ${isExpanded ? 'border-b border-slate-100' : ''}`}
                         >
-                            <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-4 cursor-pointer flex-1" onClick={() => toggleOrder(orderId)}>
                                 <div className={`p-2 rounded-lg ${hasPending ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
                                     <Box size={20} />
                                 </div>
@@ -252,7 +338,19 @@ export const MaterialsDashboard: React.FC = () => {
                                         <AlertCircle size={12}/> Action Required
                                     </span>
                                 )}
-                                {isExpanded ? <ChevronUp size={20} className="text-slate-400"/> : <ChevronDown size={20} className="text-slate-400"/>}
+                                <button 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if(order) handlePrintOrderSummary(order, orderRequests);
+                                    }}
+                                    className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded border border-transparent hover:border-slate-200 transition"
+                                    title="Print Full Order Receipt"
+                                >
+                                    <Printer size={18}/>
+                                </button>
+                                <div onClick={() => toggleOrder(orderId)} className="cursor-pointer">
+                                    {isExpanded ? <ChevronUp size={20} className="text-slate-400"/> : <ChevronDown size={20} className="text-slate-400"/>}
+                                </div>
                             </div>
                         </div>
 
@@ -285,15 +383,21 @@ export const MaterialsDashboard: React.FC = () => {
                                                         </div>
                                                     </td>
                                                     <td className="p-4 text-center">
-                                                        {req.attachment_url ? (
-                                                            <a 
-                                                                href={req.attachment_url} 
-                                                                target="_blank" 
-                                                                rel="noreferrer"
-                                                                className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100 text-xs font-medium border border-indigo-100"
-                                                            >
-                                                                <Paperclip size={12}/> View File
-                                                            </a>
+                                                        {req.attachments && req.attachments.length > 0 ? (
+                                                            <div className="flex flex-col gap-1 items-center">
+                                                                {req.attachments.map((att, i) => (
+                                                                    <a 
+                                                                        key={i}
+                                                                        href={att.url} 
+                                                                        target="_blank" 
+                                                                        rel="noreferrer"
+                                                                        className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100 text-xs font-medium border border-indigo-100 max-w-[120px] truncate"
+                                                                        title={att.name}
+                                                                    >
+                                                                        <Paperclip size={12} className="shrink-0"/> <span className="truncate">{att.name}</span>
+                                                                    </a>
+                                                                ))}
+                                                            </div>
                                                         ) : (
                                                             <span className="text-slate-300">-</span>
                                                         )}
@@ -387,7 +491,7 @@ export const MaterialsDashboard: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="flex justify-end gap-3 pt-2 border-t">
+                <div className="flex-end justify-end gap-3 pt-2 border-t flex">
                     <button onClick={() => setApprovalModal(null)} className="px-4 py-2 text-slate-500 hover:bg-slate-100 rounded-lg text-sm font-medium">Cancel</button>
                     <button onClick={handleApprove} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 text-sm font-bold shadow-md">
                         <Printer size={16} />

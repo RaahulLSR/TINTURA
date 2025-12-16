@@ -1,6 +1,6 @@
 
 import { supabase } from './supabase';
-import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole, StockCommit, MaterialApproval, OrderLog } from '../types';
+import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole, StockCommit, MaterialApproval, OrderLog, Attachment } from '../types';
 
 // --- MOCK DATA FALLBACKS ---
 
@@ -30,17 +30,19 @@ let MOCK_ORDERS: Order[] = [
     description: 'Summer Shirts', 
     target_delivery_date: '2023-12-01', 
     status: OrderStatus.IN_PROGRESS,
+    size_format: 'standard',
     size_breakdown: [
       { color: 'Red', s: 10, m: 20, l: 20, xl: 0, xxl: 0, xxxl: 0 },
       { color: 'Blue', s: 10, m: 20, l: 20, xl: 0, xxl: 0, xxxl: 0 }
-    ]
+    ],
+    attachments: []
   },
-  { id: '2', order_no: 'ORD-10002', unit_id: 3, style_number: 'ST-600', quantity: 50, box_count: 2, last_barcode_serial: 0, description: 'Denim Jackets', target_delivery_date: '2023-11-20', status: OrderStatus.ASSIGNED },
-  { id: '3', order_no: 'ORD-10003', unit_id: 2, style_number: 'ST-500', quantity: 200, box_count: 10, last_barcode_serial: 0, description: 'Cotton Pants', target_delivery_date: '2023-12-15', status: OrderStatus.QC, qc_notes: 'Initial checks pending' },
+  { id: '2', order_no: 'ORD-10002', unit_id: 3, style_number: 'ST-600', quantity: 50, box_count: 2, last_barcode_serial: 0, description: 'Denim Jackets', target_delivery_date: '2023-11-20', status: OrderStatus.ASSIGNED, size_format: 'standard', attachments: [] },
+  { id: '3', order_no: 'ORD-10003', unit_id: 2, style_number: 'ST-500', quantity: 200, box_count: 10, last_barcode_serial: 0, description: 'Cotton Pants', target_delivery_date: '2023-12-15', status: OrderStatus.QC, qc_notes: 'Initial checks pending', size_format: 'numeric', attachments: [] },
 ];
 
 let MOCK_REQUESTS: MaterialRequest[] = [
-  { id: '101', order_id: '1', material_content: 'Blue Thread (50 spools)', quantity_requested: 50, quantity_approved: 0, unit: 'Nos', status: MaterialStatus.PENDING, created_at: new Date().toISOString() }
+  { id: '101', order_id: '1', material_content: 'Blue Thread (50 spools)', quantity_requested: 50, quantity_approved: 0, unit: 'Nos', status: MaterialStatus.PENDING, created_at: new Date().toISOString(), attachments: [] }
 ];
 
 // Mock for logs/approvals to prevent crash if DB tables missing
@@ -147,8 +149,8 @@ export const createOrder = async (order: Partial<Order>): Promise<Order | null> 
         description: order.description,
         target_delivery_date: order.target_delivery_date,
         last_barcode_serial: 0,
-        attachment_url: order.attachment_url,
-        attachment_name: order.attachment_name,
+        attachments: order.attachments || [],
+        size_format: order.size_format || 'standard',
         status: OrderStatus.ASSIGNED
     }]).select().single();
 
@@ -159,7 +161,8 @@ export const createOrder = async (order: Partial<Order>): Promise<Order | null> 
             order_no: `ORD-${Date.now().toString().substr(-5)}`,
             id: Math.random().toString(), 
             status: OrderStatus.ASSIGNED,
-            last_barcode_serial: 0
+            last_barcode_serial: 0,
+            size_format: order.size_format || 'standard'
         } as Order;
         MOCK_ORDERS.push(newOrder);
         // Log Mock
@@ -241,7 +244,7 @@ export const createMaterialRequest = async (req: Partial<MaterialRequest>) => {
         material_content: req.material_content,
         quantity_requested: req.quantity_requested,
         unit: req.unit || 'Nos',
-        attachment_url: req.attachment_url,
+        attachments: req.attachments || [],
         status: MaterialStatus.PENDING
     }]);
 
@@ -254,6 +257,14 @@ export const createMaterialRequest = async (req: Partial<MaterialRequest>) => {
             quantity_approved: 0,
             unit: req.unit || 'Nos' 
         } as MaterialRequest);
+    }
+};
+
+export const updateMaterialRequest = async (id: string, updates: Partial<MaterialRequest>) => {
+    const { error } = await supabase.from('material_requests').update(updates).eq('id', id);
+    if (error) {
+        console.warn("Req Update Failed (Using Mock):", error.message);
+        MOCK_REQUESTS = MOCK_REQUESTS.map(r => r.id === id ? { ...r, ...updates } : r);
     }
 };
 
@@ -482,8 +493,8 @@ export const uploadOrderAttachment = async (file: File): Promise<string | null> 
 
     if (error) {
         console.error("Upload Error:", error.message);
-        alert("Failed to upload file. Check if Bucket exists in Supabase.");
-        return null;
+        // Fallback for demo without real storage bucket
+        return URL.createObjectURL(file); 
     }
 
     const { data } = supabase.storage

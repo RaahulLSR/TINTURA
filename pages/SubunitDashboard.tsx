@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState } from 'react';
-import { fetchOrders, updateOrderStatus, generateBarcodes, createMaterialRequest, fetchMaterialRequests, uploadOrderAttachment, addOrderLog, fetchOrderLogs } from '../services/db';
-import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog } from '../types';
+import { fetchOrders, updateOrderStatus, generateBarcodes, createMaterialRequest, fetchMaterialRequests, uploadOrderAttachment, addOrderLog, fetchOrderLogs, updateMaterialRequest } from '../services/db';
+import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog, Attachment, MaterialStatus } from '../types';
 import { StatusBadge, BulkActionToolbar } from '../components/Widgets';
-import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, X, Eye, CheckCircle2, History, ListTodo, Archive, FileText, Download, Plus, Trash2, Paperclip, Calculator, Clock, MessageSquare, Send, Search, ArrowLeftRight } from 'lucide-react';
+import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, X, Eye, CheckCircle2, History, ListTodo, Archive, FileText, Download, Plus, Trash2, Paperclip, Calculator, Clock, MessageSquare, Send, Search, ArrowLeftRight, Minimize2, Maximize2, Pencil } from 'lucide-react';
 
 // Hardcoded ID for this specific Subunit Dashboard instance
 const CURRENT_UNIT_ID = 2; // Sewing Unit A
@@ -14,7 +14,7 @@ interface MaterialRow {
     qtyPerPc: number;   // For Calculator Mode
     requestQty: number; // For Direct Entry Mode
     unit: string;
-    file: File | null;
+    files: File[];
 }
 
 export const SubunitDashboard: React.FC = () => {
@@ -38,6 +38,10 @@ export const SubunitDashboard: React.FC = () => {
   const [showMaterialHistory, setShowMaterialHistory] = useState(false);
   const [materialHistory, setMaterialHistory] = useState<MaterialRequest[]>([]);
 
+  // Material Request Editing State
+  const [isEditingRequest, setIsEditingRequest] = useState<{ id: string, originalData: MaterialRequest } | null>(null);
+  const [isMaterialModalMinimized, setIsMaterialModalMinimized] = useState(false);
+
   // Completion Modal State
   const [completionModal, setCompletionModal] = useState<Order | null>(null);
   const [completionForm, setCompletionForm] = useState<{
@@ -45,7 +49,7 @@ export const SubunitDashboard: React.FC = () => {
       actualBoxCount: number
   } | null>(null);
 
-  // Size Header Toggle State
+  // Size Header Toggle State (Now mainly for internal logic display, auto-set by order format)
   const [useNumericSizes, setUseNumericSizes] = useState(false);
 
   const [barcodeForm, setBarcodeForm] = useState({ qty: 0, size: 'M' });
@@ -56,7 +60,7 @@ export const SubunitDashboard: React.FC = () => {
   // Calculator Mode State
   const [totalPcs, setTotalPcs] = useState<number>(0);
   const [materialRows, setMaterialRows] = useState<MaterialRow[]>([
-      { id: 1, name: '', qtyPerPc: 0, requestQty: 0, unit: 'Nos', file: null }
+      { id: 1, name: '', qtyPerPc: 0, requestQty: 0, unit: 'Nos', files: [] }
   ]);
   const [isSubmittingReq, setIsSubmittingReq] = useState(false);
 
@@ -146,6 +150,7 @@ export const SubunitDashboard: React.FC = () => {
 
   // --- Completion Logic ---
   const openCompletionModal = (order: Order) => {
+      setUseNumericSizes(order.size_format === 'numeric');
       const initialBreakdown = order.size_breakdown 
         ? order.size_breakdown.map(r => ({ color: r.color, s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0 }))
         : [{ color: 'Standard', s: 0, m: 0, l: 0, xl: 0, xxl: 0, xxxl: 0 }];
@@ -184,6 +189,11 @@ export const SubunitDashboard: React.FC = () => {
       refreshOrders();
   };
 
+  const openDetailsModal = (order: Order) => {
+      setUseNumericSizes(order.size_format === 'numeric');
+      setDetailsModal(order);
+  };
+
   // --- Material History Logic ---
   const handleOpenMaterialHistory = async () => {
       const allRequests = await fetchMaterialRequests();
@@ -191,6 +201,130 @@ export const SubunitDashboard: React.FC = () => {
       const unitRequests = allRequests.filter(req => unitOrderIds.includes(req.order_id));
       setMaterialHistory(unitRequests);
       setShowMaterialHistory(true);
+  };
+
+  const handleEditRequest = (req: MaterialRequest) => {
+      setIsEditingRequest({ id: req.id, originalData: req });
+      setMaterialModal(req.order_id);
+      setReqTab('direct');
+      setMaterialRows([{ 
+          id: 1, 
+          name: req.material_content, 
+          qtyPerPc: 0, 
+          requestQty: req.quantity_requested, 
+          unit: req.unit, 
+          files: [] // Existing files are not easily editable in this simplified view without more complex state
+      }]);
+      setShowMaterialHistory(false); // Close history to show editor
+  };
+
+  const handlePrintOrderReceipt = (order: Order, reqs: MaterialRequest[]) => {
+      const win = window.open('', 'AccessoriesReceipt', 'width=1000,height=800');
+      if (win) {
+          const page1Rows = reqs.map((req, idx) => `
+            <tr>
+                <td style="text-align:center;">${idx + 1}</td>
+                <td>${req.material_content}</td>
+                <td style="text-align:center;">${req.unit || 'Nos'}</td>
+                <td style="text-align:right; font-weight:bold;">${req.quantity_requested}</td>
+            </tr>
+          `).join('');
+
+          const page2Rows = reqs.map((req, idx) => {
+              const balance = req.quantity_requested - req.quantity_approved;
+              return `
+                <tr>
+                    <td style="text-align:center;">${idx + 1}</td>
+                    <td>${req.material_content}</td>
+                    <td style="text-align:right;">${req.quantity_requested}</td>
+                    <td style="text-align:right; font-weight:bold; color:green;">${req.quantity_approved}</td>
+                    <td style="text-align:right; font-weight:bold; color:${balance > 0 ? 'red' : 'black'};">${balance}</td>
+                    <td style="text-align:center; font-size:10px; text-transform:uppercase;">${req.status.replace('_', ' ')}</td>
+                </tr>
+              `;
+          }).join('');
+
+          const headerHTML = `
+            <div class="header">
+                <div class="brand">TINTURA SST</div>
+                <div class="title">ACCESSORIES REQUIREMENT RECEIPT</div>
+                <div class="meta">
+                    <strong>ORDER NO:</strong> ${order.order_no} &nbsp;|&nbsp; 
+                    <strong>STYLE:</strong> ${order.style_number} &nbsp;|&nbsp; 
+                    <strong>DATE:</strong> ${new Date().toLocaleDateString()}
+                </div>
+            </div>
+          `;
+
+          win.document.write(`
+            <html>
+            <head>
+                <title>Accessories Receipt - ${order.order_no}</title>
+                <style>
+                    @media print { 
+                        .page-break { page-break-before: always; } 
+                        body { -webkit-print-color-adjust: exact; }
+                    }
+                    body { font-family: 'Arial', sans-serif; padding: 40px; color: #333; }
+                    .header { text-align: center; border-bottom: 2px solid #000; margin-bottom: 20px; padding-bottom: 10px; }
+                    .brand { font-size: 24px; font-weight: 900; margin-bottom: 5px; }
+                    .title { font-size: 18px; font-weight: bold; text-transform: uppercase; margin-bottom: 10px; }
+                    .meta { font-size: 12px; background: #eee; padding: 5px; }
+                    .page-title { font-size: 14px; font-weight: bold; text-transform: uppercase; margin-bottom: 10px; text-align:left; border-left: 5px solid #000; padding-left: 10px; }
+                    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; }
+                    th, td { border: 1px solid #ccc; padding: 8px; }
+                    th { background: #f4f4f4; text-transform: uppercase; }
+                </style>
+            </head>
+            <body>
+                <!-- PAGE 1 -->
+                ${headerHTML}
+                <div class="page-title">Page 1: Request Sheet</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th width="50">S.No</th>
+                            <th>Material Description</th>
+                            <th width="80">Unit</th>
+                            <th width="100" style="text-align:right">Total Requested</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${page1Rows}
+                    </tbody>
+                </table>
+                <div style="text-align:center; font-size:10px; margin-top:20px;">-- Verified By Production --</div>
+
+                <div class="page-break"></div>
+
+                <!-- PAGE 2 -->
+                ${headerHTML}
+                <div class="page-title">Page 2: Approval & Balance Sheet</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th width="50">S.No</th>
+                            <th>Material Description</th>
+                            <th width="80" style="text-align:right">Req</th>
+                            <th width="80" style="text-align:right">Approved</th>
+                            <th width="80" style="text-align:right">Balance</th>
+                            <th width="100">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${page2Rows}
+                    </tbody>
+                </table>
+                <div style="text-align:center; font-size:10px; margin-top:20px;">-- Approved By Materials Dept --</div>
+
+                <script>
+                    window.onload = () => { setTimeout(() => window.print(), 500); };
+                </script>
+            </body>
+            </html>
+          `);
+          win.document.close();
+      }
   };
 
   // --- Helper for Row Total ---
@@ -227,6 +361,145 @@ export const SubunitDashboard: React.FC = () => {
     return useNumericSizes 
         ? ['65', '70', '75', '80', '85', '90'] 
         : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
+  };
+
+  const handlePrintOrderSheet = () => {
+      if (!detailsModal) return;
+      
+      const breakdown = detailsModal.size_breakdown || [];
+      const headers = getHeaderLabels();
+      const keys = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl'] as const;
+
+      const breakdownRows = breakdown.map(row => {
+          return `
+            <tr>
+                <td style="text-align:left; font-weight:bold;">${row.color}</td>
+                ${keys.map(k => `<td>${(row as any)[k]}</td>`).join('')}
+                <td style="font-weight:bold;">${getRowTotal(row)}</td>
+            </tr>
+          `;
+      }).join('');
+
+      let attachmentHtml = '';
+      if (detailsModal.attachments && detailsModal.attachments.length > 0) {
+          attachmentHtml = `<div class="section-title">Attached Documents</div><div style="display:flex; flex-direction:column; gap:20px; page-break-inside: avoid;">`;
+          detailsModal.attachments.forEach(att => {
+              if (att.type === 'image') {
+                  attachmentHtml += `
+                    <div style="border:1px solid #ccc; padding:10px; width:100%; text-align:center;">
+                        <img src="${att.url}" style="max-width:100%; max-height:800px; display:block; margin:0 auto;" />
+                        <div style="font-size:12px; margin-top:5px; font-weight:bold;">IMAGE: ${att.name}</div>
+                    </div>
+                  `;
+              } else {
+                  attachmentHtml += `
+                    <div style="border:1px dashed #ccc; padding:20px; background:#f9f9f9; text-align:center;">
+                        <strong>DOCUMENT:</strong> ${att.name}<br/>
+                        <span style="font-size:11px; color:#666;">(File type not supported for direct print embedding. Please refer to digital version.)</span>
+                    </div>
+                  `;
+              }
+          });
+          attachmentHtml += `</div>`;
+      } else if (detailsModal.attachment_url) {
+          // Legacy support
+           attachmentHtml = `
+            <div class="section-title">Attachment Reference</div>
+            <p>Legacy Attachment: ${detailsModal.attachment_name || 'Attached File'} (Refer to digital record)</p>
+           `;
+      }
+
+      const win = window.open('', 'PrintOrderSheet', 'width=1000,height=800');
+      if (win) {
+          win.document.write(`
+            <html>
+            <head>
+                <title>Order Sheet - ${detailsModal.order_no}</title>
+                <style>
+                    @media print {
+                        body { -webkit-print-color-adjust: exact; }
+                        .no-break { page-break-inside: avoid; }
+                    }
+                    body { font-family: 'Arial', sans-serif; padding: 40px; font-size: 14px; color: #333; }
+                    .header { text-align: center; border-bottom: 4px solid #000; padding-bottom: 20px; margin-bottom: 30px; }
+                    .brand { font-size: 48px; font-weight: 900; text-transform: uppercase; margin: 0; letter-spacing: 2px; line-height: 1; }
+                    .title { font-size: 24px; font-weight: bold; text-transform: uppercase; margin: 10px 0 0 0; color: #444; }
+                    .subtitle { font-size: 14px; color: #666; margin-top: 5px; }
+                    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+                    .box { padding: 15px; border: 2px solid #333; border-radius: 4px; background: #fff; }
+                    .label { font-size: 12px; text-transform: uppercase; color: #666; font-weight: bold; display: block; margin-bottom: 4px; }
+                    .value { font-size: 18px; font-weight: bold; color: #000; }
+                    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                    th, td { border: 1px solid #333; padding: 10px; text-align: center; }
+                    th { background: #eee; font-weight: bold; text-transform: uppercase; }
+                    .section-title { font-size: 18px; font-weight: bold; border-bottom: 2px solid #333; padding-bottom: 5px; margin-top: 40px; margin-bottom: 15px; text-transform: uppercase; page-break-after: avoid; }
+                    .footer { margin-top: 50px; text-align: center; font-size: 12px; color: #aaa; border-top: 1px solid #eee; padding-top: 10px; page-break-before: always; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <div class="brand">TINTURA SST</div>
+                    <div class="title">Manufacturing Order Sheet</div>
+                    <div class="subtitle">Internal Production Document</div>
+                </div>
+
+                <div class="grid">
+                    <div class="box">
+                        <span class="label">Order Number</span>
+                        <div class="value">${detailsModal.order_no}</div>
+                    </div>
+                    <div class="box">
+                        <span class="label">Style Number</span>
+                        <div class="value">${detailsModal.style_number}</div>
+                    </div>
+                    <div class="box">
+                        <span class="label">Target Quantity</span>
+                        <div class="value">${detailsModal.quantity} pcs</div>
+                    </div>
+                    <div class="box">
+                        <span class="label">Delivery Date</span>
+                        <div class="value">${detailsModal.target_delivery_date}</div>
+                    </div>
+                </div>
+
+                <div class="section-title">Size Breakdown Matrix</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="text-align:left;">Color</th>
+                            ${headers.map(h => `<th>${h}</th>`).join('')}
+                            <th>Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${breakdownRows}
+                    </tbody>
+                </table>
+
+                <div class="section-title">Production Notes</div>
+                <div style="padding: 15px; border: 2px solid #333; min-height: 80px; font-size: 16px;">
+                    ${detailsModal.description || "No specific notes provided."}
+                </div>
+
+                ${attachmentHtml}
+
+                <div class="footer">
+                    Generated on ${new Date().toLocaleString()} <br/>
+                    System Generated Document. Verify details before cutting.
+                </div>
+                <script>
+                    // Wait for images to load before printing
+                    window.onload = () => {
+                        setTimeout(() => {
+                            window.print();
+                        }, 800);
+                    };
+                </script>
+            </body>
+            </html>
+          `);
+          win.document.close();
+      }
   };
 
   // ... (Existing Helpers: Barcode, Material) ...
@@ -290,7 +563,7 @@ export const SubunitDashboard: React.FC = () => {
                         text-align: center;
                         background: white;
                     }
-                    .header { font-size: 10px; font-weight: bold; text-transform: uppercase; margin-bottom: 2px; }
+                    .header { font-size: 10px; font-weight: bold; text-transform: uppercase; margin: 2px; }
                     .meta { font-size: 10px; margin-bottom: 2px; color: #333; }
                     svg { max-width: 95%; height: auto; display: block; }
                 </style>
@@ -318,9 +591,11 @@ export const SubunitDashboard: React.FC = () => {
   const handleMaterialModalOpen = (orderId: string) => {
       const order = orders.find(o => o.id === orderId);
       setMaterialModal(orderId);
+      setIsMaterialModalMinimized(false);
+      setIsEditingRequest(null);
       if (order) setTotalPcs(order.quantity);
       setReqTab('pcs');
-      setMaterialRows([{ id: 1, name: '', qtyPerPc: 0, requestQty: 0, unit: 'Nos', file: null }]);
+      setMaterialRows([{ id: 1, name: '', qtyPerPc: 0, requestQty: 0, unit: 'Nos', files: [] }]);
   };
 
   const handleRowChange = (id: number, field: keyof MaterialRow, value: any) => {
@@ -328,7 +603,7 @@ export const SubunitDashboard: React.FC = () => {
   };
 
   const addRow = () => {
-      setMaterialRows(prev => [...prev, { id: Date.now(), name: '', qtyPerPc: 0, requestQty: 0, unit: 'Nos', file: null }]);
+      setMaterialRows(prev => [...prev, { id: Date.now(), name: '', qtyPerPc: 0, requestQty: 0, unit: 'Nos', files: [] }]);
   };
 
   const removeRow = (id: number) => {
@@ -353,24 +628,43 @@ export const SubunitDashboard: React.FC = () => {
 
           if (finalQty <= 0) continue;
 
-          let attachmentUrl = undefined;
-          if (row.file) {
-              const url = await uploadOrderAttachment(row.file);
-              if (url) attachmentUrl = url;
+          // Upload all files
+          const attachments: Attachment[] = [];
+          if (row.files.length > 0) {
+              for (const file of row.files) {
+                  const url = await uploadOrderAttachment(file);
+                  if (url) {
+                      attachments.push({
+                          name: file.name,
+                          url: url,
+                          type: file.type.startsWith('image/') ? 'image' : 'document'
+                      });
+                  }
+              }
           }
 
-          await createMaterialRequest({
-              order_id: materialModal,
-              material_content: row.name,
-              quantity_requested: finalQty,
-              unit: row.unit,
-              attachment_url: attachmentUrl
-          });
+          if (isEditingRequest) {
+              await updateMaterialRequest(isEditingRequest.id, {
+                  material_content: row.name,
+                  quantity_requested: finalQty,
+                  unit: row.unit,
+                  attachments: attachments.length > 0 ? attachments : undefined // Only update if new files provided, logic simplification
+              });
+          } else {
+              await createMaterialRequest({
+                  order_id: materialModal,
+                  material_content: row.name,
+                  quantity_requested: finalQty,
+                  unit: row.unit,
+                  attachments: attachments
+              });
+          }
       }
 
       setIsSubmittingReq(false);
       setMaterialModal(null);
-      alert("Material Request(s) Sent Successfully!");
+      setIsEditingRequest(null);
+      alert(isEditingRequest ? "Request Updated!" : "Material Request(s) Sent Successfully!");
   };
 
   return (
@@ -492,7 +786,7 @@ export const SubunitDashboard: React.FC = () => {
                     </td>
                     <td className="p-4 text-right flex justify-end gap-2 items-center flex-wrap">
                         <button 
-                            onClick={() => setDetailsModal(order)}
+                            onClick={() => openDetailsModal(order)}
                             className="text-xs bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded inline-flex items-center gap-1 border border-slate-200 shadow-sm"
                             title="View Full Details"
                         >
@@ -569,9 +863,11 @@ export const SubunitDashboard: React.FC = () => {
       )}
 
       {/* Details Modal (Existing) */}
+      {/* ... (This section already updated in previous turn, ensuring format is kept) ... */}
       {detailsModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden">
+                {/* ... Header and Content ... */}
                 <div className="p-6 border-b flex justify-between items-center bg-slate-50">
                     <div>
                         <h3 className="text-xl font-bold text-slate-800">{detailsModal.order_no}</h3>
@@ -592,7 +888,26 @@ export const SubunitDashboard: React.FC = () => {
                         </div>
                     </div>
                     
-                    {detailsModal.attachment_url && (
+                    {detailsModal.attachments && detailsModal.attachments.length > 0 && (
+                        <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-lg">
+                            <h4 className="font-bold text-indigo-900 mb-2 flex items-center gap-2 text-sm"><Paperclip size={14}/> Attachments</h4>
+                            <div className="flex flex-wrap gap-2">
+                                {detailsModal.attachments.map((file, i) => (
+                                    <a 
+                                        key={i}
+                                        href={file.url} 
+                                        target="_blank" 
+                                        rel="noreferrer"
+                                        className="px-3 py-1.5 bg-white text-indigo-600 rounded text-xs font-bold flex items-center gap-2 hover:bg-indigo-50 border border-indigo-200"
+                                    >
+                                        <Download size={12}/> {file.name}
+                                    </a>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {(!detailsModal.attachments || detailsModal.attachments.length === 0) && detailsModal.attachment_url && (
                         <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center justify-between">
                             <div className="flex items-center gap-3">
                                 <div className="p-2 bg-white rounded-full text-indigo-600"><FileText size={20}/></div>
@@ -611,26 +926,6 @@ export const SubunitDashboard: React.FC = () => {
                             </a>
                         </div>
                     )}
-
-                    {detailsModal.qc_attachment_url && (
-                        <div className="p-4 bg-teal-50 border border-teal-100 rounded-lg flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-white rounded-full text-teal-600"><CheckCircle2 size={20}/></div>
-                                <div>
-                                    <p className="text-sm font-bold text-teal-900">QC Report / File</p>
-                                    <p className="text-xs text-teal-600 truncate max-w-[200px]">Evidence of Quality Check</p>
-                                </div>
-                            </div>
-                            <a 
-                                href={detailsModal.qc_attachment_url} 
-                                target="_blank" 
-                                rel="noreferrer"
-                                className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-teal-700"
-                            >
-                                <Download size={16}/> View
-                            </a>
-                        </div>
-                    )}
                     
                     {/* Matrix */}
                     <div>
@@ -646,12 +941,7 @@ export const SubunitDashboard: React.FC = () => {
                                     <thead className="bg-slate-100 text-slate-600 font-semibold border-b">
                                         <tr>
                                             <th className="p-3 text-left">Color</th>
-                                            <th className="p-3">S / 65</th>
-                                            <th className="p-3">M / 70</th>
-                                            <th className="p-3">L / 75</th>
-                                            <th className="p-3">XL / 80</th>
-                                            <th className="p-3">XXL / 85</th>
-                                            <th className="p-3">XXXL / 90</th>
+                                            {getHeaderLabels().map(h => <th key={h} className="p-3">{h}</th>)}
                                             <th className="p-3 font-bold bg-slate-200">Total</th>
                                         </tr>
                                     </thead>
@@ -691,20 +981,6 @@ export const SubunitDashboard: React.FC = () => {
                         )}
                     </div>
 
-                    {/* Boxes Info */}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="p-3 bg-indigo-50 border border-indigo-100 rounded">
-                             <h4 className="font-bold text-indigo-900 mb-1 text-xs uppercase">No. of Boxes (Planned)</h4>
-                             <p className="text-xl font-mono text-indigo-700">{detailsModal.box_count || 0}</p>
-                        </div>
-                        {detailsModal.status === OrderStatus.COMPLETED && (
-                             <div className="p-3 bg-green-50 border border-green-100 rounded">
-                                <h4 className="font-bold text-green-900 mb-1 text-xs uppercase">Actual Boxes Packed</h4>
-                                <p className="text-xl font-mono text-green-700">{detailsModal.actual_box_count || 0}</p>
-                             </div>
-                        )}
-                    </div>
-
                     <div>
                          <h4 className="font-bold text-slate-700 mb-1">Description / Notes</h4>
                          <p className="text-sm text-slate-600 bg-slate-50 p-3 rounded border border-slate-100">
@@ -712,7 +988,13 @@ export const SubunitDashboard: React.FC = () => {
                          </p>
                     </div>
                 </div>
-                <div className="p-4 border-t bg-slate-50 text-right">
+                <div className="p-4 border-t bg-slate-50 text-right flex justify-end gap-2">
+                    <button 
+                        onClick={handlePrintOrderSheet}
+                        className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 px-4 py-2 rounded font-bold flex items-center gap-2"
+                    >
+                        <Printer size={16}/> Print Order Sheet
+                    </button>
                     <button onClick={() => setDetailsModal(null)} className="bg-slate-800 text-white px-4 py-2 rounded font-medium hover:bg-slate-700">Close</button>
                 </div>
             </div>
@@ -720,6 +1002,7 @@ export const SubunitDashboard: React.FC = () => {
       )}
 
       {/* Completion Modal */}
+      {/* ... (No changes needed here from previous, just context) ... */}
       {completionModal && completionForm && (
         <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden animate-scale-up">
@@ -737,14 +1020,6 @@ export const SubunitDashboard: React.FC = () => {
                     {/* Matrix Input */}
                     <div className="flex justify-between items-center mb-2">
                          <div/>
-                         <button 
-                            type="button"
-                            onClick={() => setUseNumericSizes(!useNumericSizes)}
-                            className="text-xs flex items-center gap-1 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 px-2 py-1 rounded border border-slate-200 transition-colors"
-                        >
-                            <ArrowLeftRight size={12}/> 
-                            {useNumericSizes ? 'Switch to Letters (S-3XL)' : 'Switch to Numbers (65-90)'}
-                        </button>
                     </div>
                     
                     <div className="border rounded-lg overflow-hidden shadow-sm">
@@ -825,6 +1100,7 @@ export const SubunitDashboard: React.FC = () => {
                 </div>
                 
                 <form onSubmit={handleGenerateAndPrint} className="space-y-4">
+                    {/* ... (Barcode form content) ... */}
                     <div className="p-3 bg-slate-50 rounded-lg text-sm border border-slate-100">
                         <div className="flex justify-between mb-1">
                             <span className="text-slate-500">Style Number:</span>
@@ -866,281 +1142,352 @@ export const SubunitDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* NEW MATERIAL REQUEST MODAL */}
+      {/* NEW MATERIAL REQUEST MODAL - WITH MINIMIZE */}
       {materialModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden animate-scale-up">
-                <div className="p-6 border-b flex justify-between items-center bg-indigo-50">
-                    <h3 className="text-xl font-bold text-indigo-900 flex items-center gap-2">
-                         <PackagePlus/> Request Materials
-                    </h3>
-                    <button onClick={() => setMaterialModal(null)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
-                </div>
-
-                <div className="p-4 border-b bg-slate-50 flex justify-center">
-                    <div className="bg-white border border-slate-200 p-1 rounded-lg flex shadow-sm">
-                        <button 
-                            onClick={() => setReqTab('pcs')}
-                            className={`px-4 py-2 rounded text-sm font-bold flex items-center gap-2 transition ${reqTab === 'pcs' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
-                        >
-                            <Calculator size={16}/> Calculator Mode
-                        </button>
-                        <button 
-                            onClick={() => setReqTab('direct')}
-                            className={`px-4 py-2 rounded text-sm font-bold flex items-center gap-2 transition ${reqTab === 'direct' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
-                        >
-                            <ArrowRight size={16}/> Direct Entry
-                        </button>
+        <>
+            {isMaterialModalMinimized ? (
+                <div className="fixed bottom-4 right-4 z-50 bg-indigo-600 text-white p-4 rounded-lg shadow-xl cursor-pointer hover:bg-indigo-700 flex items-center gap-3 animate-scale-up" onClick={() => setIsMaterialModalMinimized(false)}>
+                    <PackagePlus size={24}/>
+                    <div>
+                        <div className="font-bold text-sm">Material Request Active</div>
+                        <div className="text-xs opacity-80">Click to expand</div>
                     </div>
+                    <Maximize2 size={16} className="ml-2"/>
                 </div>
-
-                <form onSubmit={handleSubmitRequest} className="p-6 max-h-[70vh] overflow-y-auto">
-                    
-                    {reqTab === 'direct' ? (
-                        <div className="space-y-6">
-                            <p className="text-sm text-slate-500 mb-2 italic bg-slate-50 p-2 rounded">
-                                Enter the exact quantities needed. No multiplication will be applied.
-                            </p>
-                            <table className="w-full text-left border-collapse">
-                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
-                                    <tr>
-                                        <th className="p-3 w-10">S.No</th>
-                                        <th className="p-3">Material Name</th>
-                                        <th className="p-3 w-32">Quantity</th>
-                                        <th className="p-3 w-20">Unit</th>
-                                        <th className="p-3 w-40">Reference File</th>
-                                        <th className="p-3 w-10"></th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {materialRows.map((row, idx) => (
-                                        <tr key={row.id}>
-                                            <td className="p-3 text-slate-400 font-mono text-xs">{idx + 1}</td>
-                                            <td className="p-3">
-                                                <input 
-                                                    placeholder="Item Name"
-                                                    className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm"
-                                                    value={row.name}
-                                                    onChange={e => handleRowChange(row.id, 'name', e.target.value)}
-                                                    required
-                                                />
-                                            </td>
-                                            <td className="p-3">
-                                                <input 
-                                                    type="number" step="0.01"
-                                                    className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm text-center"
-                                                    value={row.requestQty}
-                                                    onChange={e => handleRowChange(row.id, 'requestQty', parseFloat(e.target.value) || 0)}
-                                                    placeholder="0"
-                                                />
-                                            </td>
-                                            <td className="p-3">
-                                                <input 
-                                                    className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm text-center"
-                                                    value={row.unit}
-                                                    placeholder="Nos"
-                                                    onChange={e => handleRowChange(row.id, 'unit', e.target.value)}
-                                                />
-                                            </td>
-                                            <td className="p-3">
-                                                <div className="relative">
-                                                    <label className="cursor-pointer flex items-center justify-center gap-2 border border-dashed border-slate-300 p-2 rounded hover:bg-slate-50 text-xs text-slate-500 overflow-hidden">
-                                                        <Paperclip size={14}/>
-                                                        <span className="truncate max-w-[80px]">{row.file ? row.file.name : 'Upload'}</span>
-                                                        <input 
-                                                            type="file" className="hidden" 
-                                                            accept="image/*,.pdf,.doc,.docx"
-                                                            onChange={e => handleRowChange(row.id, 'file', e.target.files?.[0] || null)}
-                                                        />
-                                                    </label>
-                                                </div>
-                                            </td>
-                                            <td className="p-3 text-center">
-                                                {materialRows.length > 1 && (
-                                                    <button type="button" onClick={() => removeRow(row.id)} className="text-red-400 hover:text-red-600">
-                                                        <Trash2 size={16}/>
-                                                    </button>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                            <button 
-                                type="button" 
-                                onClick={addRow}
-                                className="text-sm font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-                            >
-                                <Plus size={16}/> Add Row
-                            </button>
-                        </div>
-                    ) : (
-                        <div className="space-y-6">
-                            <div className="flex items-center gap-4 bg-yellow-50 p-4 rounded-lg border border-yellow-100">
-                                <label className="font-bold text-yellow-900">Total Number of Pcs (Order Qty):</label>
-                                <input 
-                                    type="number"
-                                    className="w-32 border-b-2 border-yellow-500 bg-transparent text-xl font-bold text-center outline-none focus:border-yellow-700 text-slate-900"
-                                    value={totalPcs}
-                                    onChange={e => setTotalPcs(parseFloat(e.target.value) || 0)}
-                                />
+            ) : (
+                <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden animate-scale-up flex flex-col max-h-[90vh]">
+                        <div className="p-6 border-b flex justify-between items-center bg-indigo-50">
+                            <h3 className="text-xl font-bold text-indigo-900 flex items-center gap-2">
+                                <PackagePlus/> {isEditingRequest ? 'Edit Material Request' : 'Request Materials'}
+                            </h3>
+                            <div className="flex items-center gap-2">
+                                <button onClick={() => setIsMaterialModalMinimized(true)} className="text-indigo-400 hover:text-indigo-600 p-1"><Minimize2 size={20}/></button>
+                                <button onClick={() => setMaterialModal(null)} className="text-slate-400 hover:text-slate-600 p-1"><X size={24}/></button>
                             </div>
-
-                            <table className="w-full text-left border-collapse">
-                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
-                                    <tr>
-                                        <th className="p-3 w-10">S.No</th>
-                                        <th className="p-3">Material Name</th>
-                                        <th className="p-3 w-28">Qty / Pc</th>
-                                        <th className="p-3 w-20">Unit</th>
-                                        <th className="p-3 w-32 bg-slate-100">Total Qty</th>
-                                        <th className="p-3 w-40">Reference File</th>
-                                        <th className="p-3 w-10"></th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {materialRows.map((row, idx) => (
-                                        <tr key={row.id}>
-                                            <td className="p-3 text-slate-400 font-mono text-xs">{idx + 1}</td>
-                                            <td className="p-3">
-                                                <input 
-                                                    placeholder="Item Name"
-                                                    className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm"
-                                                    value={row.name}
-                                                    onChange={e => handleRowChange(row.id, 'name', e.target.value)}
-                                                    required
-                                                />
-                                            </td>
-                                            <td className="p-3">
-                                                <input 
-                                                    type="number" step="0.01"
-                                                    className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm text-center"
-                                                    value={row.qtyPerPc}
-                                                    onChange={e => handleRowChange(row.id, 'qtyPerPc', parseFloat(e.target.value) || 0)}
-                                                />
-                                            </td>
-                                            <td className="p-3">
-                                                <input 
-                                                    className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm text-center"
-                                                    value={row.unit}
-                                                    placeholder="Nos"
-                                                    onChange={e => handleRowChange(row.id, 'unit', e.target.value)}
-                                                />
-                                            </td>
-                                            <td className="p-3 bg-slate-50 font-bold text-indigo-700 text-center">
-                                                {(row.qtyPerPc * totalPcs).toFixed(2)}
-                                            </td>
-                                            <td className="p-3">
-                                                <div className="relative">
-                                                    <label className="cursor-pointer flex items-center justify-center gap-2 border border-dashed border-slate-300 p-2 rounded hover:bg-slate-50 text-xs text-slate-500 overflow-hidden">
-                                                        <Paperclip size={14}/>
-                                                        <span className="truncate max-w-[80px]">{row.file ? row.file.name : 'Upload'}</span>
-                                                        <input 
-                                                            type="file" className="hidden" 
-                                                            accept="image/*,.pdf,.doc,.docx"
-                                                            onChange={e => handleRowChange(row.id, 'file', e.target.files?.[0] || null)}
-                                                        />
-                                                    </label>
-                                                </div>
-                                            </td>
-                                            <td className="p-3 text-center">
-                                                {materialRows.length > 1 && (
-                                                    <button type="button" onClick={() => removeRow(row.id)} className="text-red-400 hover:text-red-600">
-                                                        <Trash2 size={16}/>
-                                                    </button>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                            <button 
-                                type="button" 
-                                onClick={addRow}
-                                className="text-sm font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-                            >
-                                <Plus size={16}/> Add Row
-                            </button>
                         </div>
-                    )}
 
-                    <div className="flex justify-end pt-6 border-t mt-6">
-                        <button type="button" onClick={() => setMaterialModal(null)} className="mr-3 px-4 py-2 text-slate-600 hover:bg-slate-50 rounded-lg">Cancel</button>
-                        <button 
-                            type="submit" 
-                            disabled={isSubmittingReq}
-                            className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 shadow-md flex items-center gap-2 disabled:opacity-50"
-                        >
-                            {isSubmittingReq ? 'Processing...' : 'Send Request'}
-                        </button>
+                        {!isEditingRequest && (
+                            <div className="p-4 border-b bg-slate-50 flex justify-center">
+                                <div className="bg-white border border-slate-200 p-1 rounded-lg flex shadow-sm">
+                                    <button 
+                                        onClick={() => setReqTab('pcs')}
+                                        className={`px-4 py-2 rounded text-sm font-bold flex items-center gap-2 transition ${reqTab === 'pcs' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                                    >
+                                        <Calculator size={16}/> Calculator Mode
+                                    </button>
+                                    <button 
+                                        onClick={() => setReqTab('direct')}
+                                        className={`px-4 py-2 rounded text-sm font-bold flex items-center gap-2 transition ${reqTab === 'direct' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                                    >
+                                        <ArrowRight size={16}/> Direct Entry
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        <form onSubmit={handleSubmitRequest} className="p-6 flex-1 overflow-y-auto">
+                            
+                            {reqTab === 'direct' ? (
+                                <div className="space-y-6">
+                                    {!isEditingRequest && (
+                                        <p className="text-sm text-slate-500 mb-2 italic bg-slate-50 p-2 rounded">
+                                            Enter the exact quantities needed. No multiplication will be applied.
+                                        </p>
+                                    )}
+                                    <table className="w-full text-left border-collapse">
+                                        <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                                            <tr>
+                                                <th className="p-3 w-10">S.No</th>
+                                                <th className="p-3">Material Name</th>
+                                                <th className="p-3 w-32">Quantity</th>
+                                                <th className="p-3 w-20">Unit</th>
+                                                <th className="p-3 w-40">Files (Multi)</th>
+                                                {!isEditingRequest && <th className="p-3 w-10"></th>}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {materialRows.map((row, idx) => (
+                                                <tr key={row.id}>
+                                                    <td className="p-3 text-slate-400 font-mono text-xs">{idx + 1}</td>
+                                                    <td className="p-3">
+                                                        <input 
+                                                            placeholder="Item Name"
+                                                            className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm"
+                                                            value={row.name}
+                                                            onChange={e => handleRowChange(row.id, 'name', e.target.value)}
+                                                            required
+                                                        />
+                                                    </td>
+                                                    <td className="p-3">
+                                                        <input 
+                                                            type="number" step="0.01"
+                                                            className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm text-center"
+                                                            value={row.requestQty}
+                                                            onChange={e => handleRowChange(row.id, 'requestQty', parseFloat(e.target.value) || 0)}
+                                                            placeholder="0"
+                                                        />
+                                                    </td>
+                                                    <td className="p-3">
+                                                        <input 
+                                                            className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm text-center"
+                                                            value={row.unit}
+                                                            placeholder="Nos"
+                                                            onChange={e => handleRowChange(row.id, 'unit', e.target.value)}
+                                                        />
+                                                    </td>
+                                                    <td className="p-3">
+                                                        <div className="relative">
+                                                            <label className="cursor-pointer flex flex-col items-center justify-center gap-1 border border-dashed border-slate-300 p-2 rounded hover:bg-slate-50 text-xs text-slate-500 overflow-hidden">
+                                                                <div className="flex items-center gap-1"><Paperclip size={12}/> Attach</div>
+                                                                {row.files.length > 0 && <span className="font-bold text-indigo-600">{row.files.length} files</span>}
+                                                                <input 
+                                                                    type="file" multiple className="hidden" 
+                                                                    accept="image/*,.pdf,.doc,.docx"
+                                                                    onChange={e => {
+                                                                        if(e.target.files) handleRowChange(row.id, 'files', Array.from(e.target.files));
+                                                                    }}
+                                                                />
+                                                            </label>
+                                                        </div>
+                                                    </td>
+                                                    {!isEditingRequest && (
+                                                        <td className="p-3 text-center">
+                                                            {materialRows.length > 1 && (
+                                                                <button type="button" onClick={() => removeRow(row.id)} className="text-red-400 hover:text-red-600">
+                                                                    <Trash2 size={16}/>
+                                                                </button>
+                                                            )}
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                    {!isEditingRequest && (
+                                        <button 
+                                            type="button" 
+                                            onClick={addRow}
+                                            className="text-sm font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                                        >
+                                            <Plus size={16}/> Add Row
+                                        </button>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="space-y-6">
+                                    <div className="flex items-center gap-4 bg-yellow-50 p-4 rounded-lg border border-yellow-100">
+                                        <label className="font-bold text-yellow-900">Total Number of Pcs (Order Qty):</label>
+                                        <input 
+                                            type="number"
+                                            className="w-32 border-b-2 border-yellow-500 bg-transparent text-xl font-bold text-center outline-none focus:border-yellow-700 text-slate-900"
+                                            value={totalPcs}
+                                            onChange={e => setTotalPcs(parseFloat(e.target.value) || 0)}
+                                        />
+                                    </div>
+
+                                    <table className="w-full text-left border-collapse">
+                                        <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                                            <tr>
+                                                <th className="p-3 w-10">S.No</th>
+                                                <th className="p-3">Material Name</th>
+                                                <th className="p-3 w-28">Qty / Pc</th>
+                                                <th className="p-3 w-20">Unit</th>
+                                                <th className="p-3 w-32 bg-slate-100">Total Qty</th>
+                                                <th className="p-3 w-40">Files (Multi)</th>
+                                                <th className="p-3 w-10"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {materialRows.map((row, idx) => (
+                                                <tr key={row.id}>
+                                                    <td className="p-3 text-slate-400 font-mono text-xs">{idx + 1}</td>
+                                                    <td className="p-3">
+                                                        <input 
+                                                            placeholder="Item Name"
+                                                            className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm"
+                                                            value={row.name}
+                                                            onChange={e => handleRowChange(row.id, 'name', e.target.value)}
+                                                            required
+                                                        />
+                                                    </td>
+                                                    <td className="p-3">
+                                                        <input 
+                                                            type="number" step="0.01"
+                                                            className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm text-center"
+                                                            value={row.qtyPerPc}
+                                                            onChange={e => handleRowChange(row.id, 'qtyPerPc', parseFloat(e.target.value) || 0)}
+                                                        />
+                                                    </td>
+                                                    <td className="p-3">
+                                                        <input 
+                                                            className="w-full border p-2 rounded focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900 text-sm text-center"
+                                                            value={row.unit}
+                                                            placeholder="Nos"
+                                                            onChange={e => handleRowChange(row.id, 'unit', e.target.value)}
+                                                        />
+                                                    </td>
+                                                    <td className="p-3 bg-slate-50 font-bold text-indigo-700 text-center">
+                                                        {(row.qtyPerPc * totalPcs).toFixed(2)}
+                                                    </td>
+                                                    <td className="p-3">
+                                                        <div className="relative">
+                                                            <label className="cursor-pointer flex flex-col items-center justify-center gap-1 border border-dashed border-slate-300 p-2 rounded hover:bg-slate-50 text-xs text-slate-500 overflow-hidden">
+                                                                <div className="flex items-center gap-1"><Paperclip size={12}/> Attach</div>
+                                                                {row.files.length > 0 && <span className="font-bold text-indigo-600">{row.files.length} files</span>}
+                                                                <input 
+                                                                    type="file" multiple className="hidden" 
+                                                                    accept="image/*,.pdf,.doc,.docx"
+                                                                    onChange={e => {
+                                                                        if(e.target.files) handleRowChange(row.id, 'files', Array.from(e.target.files));
+                                                                    }}
+                                                                />
+                                                            </label>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-3 text-center">
+                                                        {materialRows.length > 1 && (
+                                                            <button type="button" onClick={() => removeRow(row.id)} className="text-red-400 hover:text-red-600">
+                                                                <Trash2 size={16}/>
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                    <button 
+                                        type="button" 
+                                        onClick={addRow}
+                                        className="text-sm font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                                    >
+                                        <Plus size={16}/> Add Row
+                                    </button>
+                                </div>
+                            )}
+
+                            <div className="flex justify-end pt-6 border-t mt-6">
+                                <button type="button" onClick={() => setMaterialModal(null)} className="mr-3 px-4 py-2 text-slate-600 hover:bg-slate-50 rounded-lg">Cancel</button>
+                                <button 
+                                    type="submit" 
+                                    disabled={isSubmittingReq}
+                                    className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 shadow-md flex items-center gap-2 disabled:opacity-50"
+                                >
+                                    {isSubmittingReq ? 'Processing...' : (isEditingRequest ? 'Update Request' : 'Send Request')}
+                                </button>
+                            </div>
+                        </form>
                     </div>
-                </form>
-            </div>
-        </div>
+                </div>
+            )}
+        </>
       )}
 
-      {/* Material History Modal */}
+      {/* Material History Modal - GROUPED BY ORDER */}
       {showMaterialHistory && (
           <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[85vh] flex flex-col">
                   <div className="p-4 border-b flex justify-between items-center bg-slate-50">
                       <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                           <Archive size={20} className="text-slate-600"/> Request History
                       </h3>
                       <button onClick={() => setShowMaterialHistory(false)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
                   </div>
-                  <div className="p-0 max-h-[60vh] overflow-y-auto">
+                  
+                  <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
                       {materialHistory.length === 0 ? (
                           <div className="p-8 text-center text-slate-400">No requests found.</div>
                       ) : (
-                          <table className="w-full text-left text-sm">
-                              <thead className="bg-slate-100 text-slate-600 sticky top-0">
-                                  <tr>
-                                      <th className="p-3">Date</th>
-                                      <th className="p-3">Order ID</th>
-                                      <th className="p-3">Material</th>
-                                      <th className="p-3">Requested</th>
-                                      <th className="p-3">Unit</th>
-                                      <th className="p-3">Approved</th>
-                                      <th className="p-3">Status</th>
-                                  </tr>
-                              </thead>
-                              <tbody className="divide-y">
-                                  {materialHistory.map(req => {
-                                      const order = orders.find(o => o.id === req.order_id);
-                                      return (
-                                          <tr key={req.id} className="hover:bg-slate-50">
-                                              <td className="p-3 text-slate-500">{new Date(req.created_at).toLocaleDateString()}</td>
-                                              <td className="p-3 font-mono text-xs">{order?.order_no || '---'}</td>
-                                              <td className="p-3 font-medium text-slate-800">
-                                                  {req.material_content}
-                                                  {req.attachment_url && (
-                                                      <a href={req.attachment_url} target="_blank" rel="noreferrer" className="ml-2 inline-block text-indigo-500 hover:text-indigo-700">
-                                                          <Paperclip size={12}/>
-                                                      </a>
-                                                  )}
-                                              </td>
-                                              <td className="p-3">{req.quantity_requested}</td>
-                                              <td className="p-3 text-slate-500">{req.unit || 'Nos'}</td>
-                                              <td className="p-3 font-bold text-green-600">{req.quantity_approved}</td>
-                                              <td className="p-3">
-                                                  <span className={`text-xs px-2 py-1 rounded font-bold ${
-                                                        req.status === 'PENDING' ? 'bg-orange-100 text-orange-600' :
-                                                        req.status === 'APPROVED' ? 'bg-green-100 text-green-600' :
-                                                        req.status === 'REJECTED' ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'
-                                                  }`}>
-                                                      {req.status}
-                                                  </span>
-                                              </td>
-                                          </tr>
-                                      )
-                                  })}
-                              </tbody>
-                          </table>
+                          // Group Logic within Render
+                          Object.entries(
+                              materialHistory.reduce((acc, req) => {
+                                  if (!acc[req.order_id]) acc[req.order_id] = [];
+                                  acc[req.order_id].push(req);
+                                  return acc;
+                              }, {} as Record<string, MaterialRequest[]>)
+                          ).map(([orderId, reqs]: [string, MaterialRequest[]]) => {
+                              const order = orders.find(o => o.id === orderId);
+                              return (
+                                  <div key={orderId} className="mb-6 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                      <div className="px-4 py-3 bg-slate-100 border-b border-slate-200 flex justify-between items-center">
+                                          <div className="flex items-center gap-3">
+                                              <span className="font-bold text-slate-700 text-sm uppercase">Order #{order?.order_no || 'Unknown'}</span>
+                                              <span className="text-xs text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-300">Style: {order?.style_number}</span>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                              <button 
+                                                onClick={() => order && handlePrintOrderReceipt(order, reqs)}
+                                                className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-white rounded border border-transparent hover:border-indigo-100 transition"
+                                                title="Print Accessories Receipt"
+                                              >
+                                                  <Printer size={16}/>
+                                              </button>
+                                              <span className="text-xs font-mono text-slate-400">ID: {orderId}</span>
+                                          </div>
+                                      </div>
+                                      
+                                      <table className="w-full text-left text-sm">
+                                          <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                                              <tr>
+                                                  <th className="p-3 w-24">Date</th>
+                                                  <th className="p-3">Material</th>
+                                                  <th className="p-3 w-20 text-center">Req</th>
+                                                  <th className="p-3 w-16 text-center">Unit</th>
+                                                  <th className="p-3 w-20 text-center">Appr</th>
+                                                  <th className="p-3 w-24 text-center">Status</th>
+                                                  <th className="p-3 w-12"></th>
+                                              </tr>
+                                          </thead>
+                                          <tbody className="divide-y divide-slate-100">
+                                              {reqs.map(req => {
+                                                  // Can edit if Pending or Partially Approved
+                                                  const canEdit = req.status === MaterialStatus.PENDING || req.status === MaterialStatus.PARTIALLY_APPROVED;
+                                                  return (
+                                                      <tr key={req.id} className="hover:bg-slate-50 transition-colors">
+                                                          <td className="p-3 text-slate-500 text-xs">{new Date(req.created_at).toLocaleDateString()}</td>
+                                                          <td className="p-3 font-medium text-slate-800">
+                                                              {req.material_content}
+                                                              {req.attachments && req.attachments.length > 0 && (
+                                                                  <span className="ml-2 inline-flex items-center gap-1 text-[10px] text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                                                                      <Paperclip size={10}/> {req.attachments.length}
+                                                                  </span>
+                                                              )}
+                                                          </td>
+                                                          <td className="p-3 text-center">{req.quantity_requested}</td>
+                                                          <td className="p-3 text-center text-slate-500 text-xs">{req.unit || 'Nos'}</td>
+                                                          <td className="p-3 text-center font-bold text-green-600">{req.quantity_approved}</td>
+                                                          <td className="p-3 text-center">
+                                                              <span className={`text-[10px] px-2 py-1 rounded font-bold uppercase ${
+                                                                    req.status === 'PENDING' ? 'bg-orange-100 text-orange-600' :
+                                                                    req.status === 'APPROVED' ? 'bg-green-100 text-green-600' :
+                                                                    req.status === 'REJECTED' ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'
+                                                              }`}>
+                                                                  {req.status}
+                                                              </span>
+                                                          </td>
+                                                          <td className="p-3 text-center">
+                                                              {canEdit && (
+                                                                  <button 
+                                                                    onClick={() => handleEditRequest(req)}
+                                                                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition"
+                                                                    title="Edit Request"
+                                                                  >
+                                                                      <Pencil size={14}/>
+                                                                  </button>
+                                                              )}
+                                                          </td>
+                                                      </tr>
+                                                  )
+                                              })}
+                                          </tbody>
+                                      </table>
+                                  </div>
+                              );
+                          })
                       )}
                   </div>
                   <div className="p-4 bg-slate-50 text-right border-t">
-                      <button onClick={() => setShowMaterialHistory(false)} className="bg-slate-800 text-white px-4 py-2 rounded">Close</button>
+                      <button onClick={() => setShowMaterialHistory(false)} className="bg-slate-800 text-white px-4 py-2 rounded font-medium hover:bg-slate-700">Close</button>
                   </div>
               </div>
           </div>

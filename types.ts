@@ -56,6 +56,12 @@ export interface SizeBreakdown {
   xxxl: number;
 }
 
+export interface Attachment {
+  name: string;
+  url: string;
+  type: 'image' | 'document';
+}
+
 export interface Order {
   id: string;
   order_no: string;
@@ -65,8 +71,7 @@ export interface Order {
   box_count?: number; // Planned boxes
   actual_box_count?: number; // Actual boxes at completion
   last_barcode_serial?: number; // Tracks the last serial used for this specific order
-  attachment_url?: string; // URL to the spec file
-  attachment_name?: string; // Original spec filename
+  attachments?: Attachment[]; // Array of attachments
   qc_attachment_url?: string; // URL to QC evidence/report file
   size_breakdown?: SizeBreakdown[]; // Planned Breakdown
   completion_breakdown?: SizeBreakdown[]; // Actual Breakdown
@@ -75,6 +80,7 @@ export interface Order {
   target_delivery_date: string; // ISO Date
   status: OrderStatus;
   created_at?: string;
+  size_format?: 'standard' | 'numeric'; // 'standard' = S,M,L... | 'numeric' = 65,70,75...
 }
 
 export interface MaterialRequest {
@@ -85,7 +91,7 @@ export interface MaterialRequest {
   quantity_requested: number;
   quantity_approved: number;
   unit: string; // New field for Unit (Nos, Kgs, etc.)
-  attachment_url?: string; // New field for reference file
+  attachments?: Attachment[]; // Array of attachments
   status: MaterialStatus;
   created_at: string;
 }
