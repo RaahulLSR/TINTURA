@@ -1,3 +1,4 @@
+
 import { supabase } from './supabase';
 import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole, StockCommit, MaterialApproval, OrderLog } from '../types';
 
@@ -28,7 +29,7 @@ let MOCK_ORDERS: Order[] = [
     last_barcode_serial: 0,
     description: 'Summer Shirts', 
     target_delivery_date: '2023-12-01', 
-    status: OrderStatus.STARTED,
+    status: OrderStatus.IN_PROGRESS,
     size_breakdown: [
       { color: 'Red', s: 10, m: 20, l: 20, xl: 0, xxl: 0, xxxl: 0 },
       { color: 'Blue', s: 10, m: 20, l: 20, xl: 0, xxl: 0, xxxl: 0 }
@@ -39,7 +40,7 @@ let MOCK_ORDERS: Order[] = [
 ];
 
 let MOCK_REQUESTS: MaterialRequest[] = [
-  { id: '101', order_id: '1', material_content: 'Blue Thread (50 spools)', quantity_requested: 50, quantity_approved: 0, status: MaterialStatus.PENDING, created_at: new Date().toISOString() }
+  { id: '101', order_id: '1', material_content: 'Blue Thread (50 spools)', quantity_requested: 50, quantity_approved: 0, unit: 'Nos', status: MaterialStatus.PENDING, created_at: new Date().toISOString() }
 ];
 
 // Mock for logs/approvals to prevent crash if DB tables missing
@@ -176,13 +177,17 @@ export const updateOrderStatus = async (
     orderId: string, 
     status: OrderStatus, 
     notes?: string,
-    completionData?: { completion_breakdown: SizeBreakdown[], actual_box_count: number }
+    completionData?: { completion_breakdown: SizeBreakdown[], actual_box_count: number },
+    qcAttachmentUrl?: string
 ): Promise<void> => {
    
    const payload: any = { status, qc_notes: notes };
    if (completionData) {
        payload.completion_breakdown = completionData.completion_breakdown;
        payload.actual_box_count = completionData.actual_box_count;
+   }
+   if (qcAttachmentUrl) {
+       payload.qc_attachment_url = qcAttachmentUrl;
    }
 
    const { error } = await supabase.from('orders').update(payload).eq('id', orderId);
@@ -199,12 +204,24 @@ export const updateOrderStatus = async (
                    ...o, 
                    status, 
                    qc_notes: notes || o.qc_notes,
-                   ...(completionData || {}) 
+                   ...(completionData || {}),
+                   ...(qcAttachmentUrl ? { qc_attachment_url: qcAttachmentUrl } : {})
                 };
            }
            return o;
        });
    }
+};
+
+export const updateOrderDetails = async (orderId: string, updates: Partial<Order>) => {
+    const { error } = await supabase.from('orders').update(updates).eq('id', orderId);
+
+    if (error) {
+        console.warn("Update Failed (Using Mock):", error.message);
+        MOCK_ORDERS = MOCK_ORDERS.map(o => o.id === orderId ? { ...o, ...updates } : o);
+    }
+    
+    await addOrderLog(orderId, 'MANUAL_UPDATE', 'Order details updated by Admin');
 };
 
 // --- MATERIAL FUNCTIONS ---
@@ -223,13 +240,20 @@ export const createMaterialRequest = async (req: Partial<MaterialRequest>) => {
         order_id: req.order_id,
         material_content: req.material_content,
         quantity_requested: req.quantity_requested,
+        unit: req.unit || 'Nos',
         attachment_url: req.attachment_url,
         status: MaterialStatus.PENDING
     }]);
 
     if (error) {
         console.warn("Req Create Failed (Using Mock):", error.message);
-        MOCK_REQUESTS.push({ ...req, id: Math.random().toString(), status: MaterialStatus.PENDING, quantity_approved: 0 } as MaterialRequest);
+        MOCK_REQUESTS.push({ 
+            ...req, 
+            id: Math.random().toString(), 
+            status: MaterialStatus.PENDING, 
+            quantity_approved: 0,
+            unit: req.unit || 'Nos' 
+        } as MaterialRequest);
     }
 };
 

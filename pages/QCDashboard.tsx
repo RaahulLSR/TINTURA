@@ -1,7 +1,8 @@
+
 import React, { useEffect, useState } from 'react';
-import { fetchOrders, updateOrderStatus } from '../services/db';
+import { fetchOrders, updateOrderStatus, uploadOrderAttachment } from '../services/db';
 import { Order, OrderStatus } from '../types';
-import { CheckCheck, ClipboardList, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { CheckCheck, ClipboardList, ThumbsUp, ThumbsDown, Upload, FileText } from 'lucide-react';
 
 interface OrderQCModal {
     id: string;
@@ -14,6 +15,8 @@ export const QCDashboard: React.FC = () => {
   const [qcOrders, setQcOrders] = useState<Order[]>([]);
   const [orderModal, setOrderModal] = useState<OrderQCModal | null>(null);
   const [qcDescription, setQcDescription] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const loadData = async () => {
     // Load Orders waiting for QC
@@ -27,17 +30,38 @@ export const QCDashboard: React.FC = () => {
   const handleOrderAction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!orderModal) return;
+    setIsProcessing(true);
+
+    let attachmentUrl = undefined;
+    if (selectedFile) {
+        const url = await uploadOrderAttachment(selectedFile);
+        if (url) attachmentUrl = url;
+    }
 
     if (orderModal.type === 'ACCEPT') {
         // Updated: Move to QC_APPROVED instead of COMPLETED
-        await updateOrderStatus(orderModal.id, OrderStatus.QC_APPROVED, `QC PASSED: ${qcDescription}`);
+        await updateOrderStatus(
+            orderModal.id, 
+            OrderStatus.QC_APPROVED, 
+            `QC PASSED: ${qcDescription}`, 
+            undefined, 
+            attachmentUrl
+        );
     } else {
-        // Move back to STARTED
-        await updateOrderStatus(orderModal.id, OrderStatus.STARTED, `QC REJECTED: ${qcDescription}`);
+        // Move back to IN_PROGRESS (Previously STARTED)
+        await updateOrderStatus(
+            orderModal.id, 
+            OrderStatus.IN_PROGRESS, 
+            `QC REJECTED: ${qcDescription}`, 
+            undefined, 
+            attachmentUrl
+        );
     }
 
+    setIsProcessing(false);
     setOrderModal(null);
     setQcDescription("");
+    setSelectedFile(null);
     loadData();
   };
 
@@ -99,37 +123,62 @@ export const QCDashboard: React.FC = () => {
                     Order: <span className="font-bold">{orderModal.orderNo}</span><br/>
                     {orderModal.type === 'ACCEPT' 
                         ? 'This will mark the order as QC APPROVED.' 
-                        : 'This will return the order to STARTED status.'}
+                        : 'This will return the order to IN PROGRESS status for rework.'}
                 </p>
 
-                <form onSubmit={handleOrderAction}>
-                    <label className="block text-sm font-bold text-slate-700 mb-1">
-                        {orderModal.type === 'ACCEPT' ? 'Quality Notes / Certification' : 'Reason for Rejection'}
-                    </label>
-                    <textarea 
-                        required
-                        className="w-full border border-slate-300 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-black"
-                        rows={3}
-                        placeholder={orderModal.type === 'ACCEPT' ? "Verified all specs..." : "Stitching issue on left sleeve..."}
-                        value={qcDescription}
-                        onChange={e => setQcDescription(e.target.value)}
-                    />
+                <form onSubmit={handleOrderAction} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-1">
+                            {orderModal.type === 'ACCEPT' ? 'Quality Notes / Certification' : 'Reason for Rejection'}
+                        </label>
+                        <textarea 
+                            required
+                            className="w-full border border-slate-300 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-slate-900"
+                            rows={3}
+                            placeholder={orderModal.type === 'ACCEPT' ? "Verified all specs..." : "Stitching issue on left sleeve..."}
+                            value={qcDescription}
+                            onChange={e => setQcDescription(e.target.value)}
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-1">Upload QC Image / File (Optional)</label>
+                        <div className="border border-dashed border-slate-300 rounded-lg p-3 text-center bg-slate-50 hover:bg-slate-100 transition cursor-pointer relative">
+                            <input 
+                                type="file" 
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                            />
+                            <div className="flex flex-col items-center justify-center text-slate-500 text-xs">
+                                <Upload size={20} className="mb-1"/>
+                                {selectedFile ? (
+                                    <span className="font-bold text-indigo-600 flex items-center gap-1">
+                                        <FileText size={12}/> {selectedFile.name}
+                                    </span>
+                                ) : (
+                                    <span>Click to upload evidence</span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                     
                     <div className="flex justify-end gap-3 mt-6">
                         <button 
                             type="button" 
-                            onClick={() => setOrderModal(null)}
+                            disabled={isProcessing}
+                            onClick={() => { setOrderModal(null); setSelectedFile(null); }}
                             className="px-4 py-2 text-slate-500 hover:bg-slate-100 rounded-lg"
                         >
                             Cancel
                         </button>
                         <button 
                             type="submit" 
-                            className={`px-4 py-2 text-white rounded-lg font-medium ${
+                            disabled={isProcessing}
+                            className={`px-4 py-2 text-white rounded-lg font-medium shadow-md flex items-center gap-2 ${
                                 orderModal.type === 'ACCEPT' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
-                            }`}
+                            } ${isProcessing ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
-                            Confirm {orderModal.type === 'ACCEPT' ? 'Approval' : 'Rejection'}
+                            {isProcessing ? 'Uploading...' : `Confirm ${orderModal.type === 'ACCEPT' ? 'Approval' : 'Rejection'}`}
                         </button>
                     </div>
                 </form>

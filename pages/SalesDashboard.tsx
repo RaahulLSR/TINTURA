@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { fetchBarcodes, createInvoice, fetchInvoices, fetchInvoiceItems } from '../services/db';
 import { Barcode, BarcodeStatus, Invoice } from '../types';
-import { ShoppingCart, FileText, ScanBarcode, Printer, X, CreditCard, History, LayoutGrid } from 'lucide-react';
+import { ShoppingCart, FileText, ScanBarcode, Printer, X, CreditCard, History, LayoutGrid, Search } from 'lucide-react';
 
 export const SalesDashboard: React.FC = () => {
     // Tabs
@@ -10,6 +10,7 @@ export const SalesDashboard: React.FC = () => {
     // Data
     const [stock, setStock] = useState<Barcode[]>([]);
     const [invoices, setInvoices] = useState<Invoice[]>([]);
+    const [historySearch, setHistorySearch] = useState('');
     
     // Cart
     const [cart, setCart] = useState<string[]>([]); // Barcode IDs
@@ -191,6 +192,12 @@ export const SalesDashboard: React.FC = () => {
 
     const cartTotal = cart.length * 25.00;
 
+    // Filter History
+    const filteredInvoices = invoices.filter(i => 
+        i.invoice_no.toLowerCase().includes(historySearch.toLowerCase()) || 
+        i.customer_name.toLowerCase().includes(historySearch.toLowerCase())
+    );
+
     return (
         <div className="flex flex-col h-[calc(100vh-100px)] gap-6">
             
@@ -271,7 +278,7 @@ export const SalesDashboard: React.FC = () => {
                                     onChange={(e) => setScanInput(e.target.value)}
                                     onKeyDown={handleScan}
                                     placeholder="Scan Barcode here..."
-                                    className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none shadow-sm font-mono text-sm bg-white text-black"
+                                    className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none shadow-sm font-mono text-sm bg-white text-slate-900"
                                     autoComplete="off"
                                 />
                             </div>
@@ -329,12 +336,24 @@ export const SalesDashboard: React.FC = () => {
             {/* TAB: HISTORY */}
             {activeTab === 'history' && (
                 <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in flex flex-col">
-                    <div className="p-4 border-b bg-slate-50 font-bold text-slate-700 flex items-center gap-2">
-                        <History size={18}/> Sales History
+                    <div className="p-4 border-b bg-slate-50 font-bold text-slate-700 flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                            <History size={18}/> Sales History
+                        </div>
+                        <div className="relative">
+                            <input 
+                                type="text"
+                                placeholder="Search Invoice or Client..."
+                                className="pl-9 pr-4 py-1.5 border border-slate-300 rounded text-sm focus:ring-1 focus:ring-indigo-500 outline-none w-64 bg-white text-slate-900"
+                                value={historySearch}
+                                onChange={(e) => setHistorySearch(e.target.value)}
+                            />
+                            <Search className="absolute left-3 top-2 text-slate-400" size={14} />
+                        </div>
                     </div>
                     <div className="flex-1 overflow-auto">
-                        {invoices.length === 0 ? (
-                            <div className="p-12 text-center text-slate-400">No sales history found.</div>
+                        {filteredInvoices.length === 0 ? (
+                            <div className="p-12 text-center text-slate-400">No matching history found.</div>
                         ) : (
                             <table className="w-full text-left">
                                 <thead className="bg-slate-50 text-slate-500 text-xs uppercase sticky top-0">
@@ -347,7 +366,7 @@ export const SalesDashboard: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    {invoices.map(inv => (
+                                    {filteredInvoices.map(inv => (
                                         <tr key={inv.id} className="hover:bg-slate-50">
                                             <td className="p-4 text-slate-700">{new Date(inv.created_at).toLocaleString()}</td>
                                             <td className="p-4 font-mono text-sm text-slate-500">{inv.invoice_no}</td>
@@ -387,7 +406,7 @@ export const SalesDashboard: React.FC = () => {
                                 <input 
                                     required
                                     type="text"
-                                    className="w-full border border-slate-300 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-slate-700 bg-white text-black"
+                                    className="w-full border border-slate-300 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-slate-700 bg-white text-slate-900"
                                     value={checkoutForm.invoiceNo}
                                     onChange={e => setCheckoutForm({...checkoutForm, invoiceNo: e.target.value})}
                                 />
@@ -399,7 +418,7 @@ export const SalesDashboard: React.FC = () => {
                                     autoFocus
                                     type="text"
                                     placeholder="Enter Client Name"
-                                    className="w-full border border-slate-300 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-700 bg-white text-black"
+                                    className="w-full border border-slate-300 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-700 bg-white text-slate-900"
                                     value={checkoutForm.clientName}
                                     onChange={e => setCheckoutForm({...checkoutForm, clientName: e.target.value})}
                                 />

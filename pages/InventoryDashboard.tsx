@@ -24,6 +24,7 @@ export const InventoryDashboard: React.FC = () => {
     // Inventory State
     const [inventory, setInventory] = useState<Barcode[]>([]);
     const [commits, setCommits] = useState<StockCommit[]>([]);
+    const [historySearch, setHistorySearch] = useState('');
     
     // Staging State
     const [scanInput, setScanInput] = useState("");
@@ -223,6 +224,11 @@ export const InventoryDashboard: React.FC = () => {
         return acc;
     }, {} as Record<string, { style: string, size: string, count: number }>);
 
+    // Filter commits
+    const filteredCommits = commits.filter(c => 
+        c.id.toString().includes(historySearch)
+    );
+
     return (
         <div className="space-y-6 h-[calc(100vh-100px)] flex flex-col">
             <div className="flex justify-between items-center">
@@ -269,7 +275,7 @@ export const InventoryDashboard: React.FC = () => {
                             <input 
                                 ref={inputRef}
                                 type="text"
-                                className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-mono text-lg shadow-sm bg-white text-black"
+                                className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-mono text-lg shadow-sm bg-white text-slate-900"
                                 placeholder="Scan item..."
                                 value={scanInput}
                                 onChange={e => setScanInput(e.target.value)}
@@ -384,12 +390,24 @@ export const InventoryDashboard: React.FC = () => {
 
             {activeTab === 'history' && (
                 <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in flex flex-col">
-                    <div className="p-4 border-b bg-slate-50 font-bold text-slate-700 flex items-center gap-2">
-                        <History size={18}/> Stock Commitment Logs
+                    <div className="p-4 border-b bg-slate-50 font-bold text-slate-700 flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                            <History size={18}/> Stock Commitment Logs
+                        </div>
+                        <div className="relative">
+                            <input 
+                                type="text"
+                                placeholder="Search Commit ID..."
+                                className="pl-9 pr-4 py-1.5 border border-slate-300 rounded text-sm focus:ring-1 focus:ring-indigo-500 outline-none w-48 bg-white text-slate-900"
+                                value={historySearch}
+                                onChange={(e) => setHistorySearch(e.target.value)}
+                            />
+                            <Search className="absolute left-3 top-2 text-slate-400" size={14} />
+                        </div>
                     </div>
                     <div className="flex-1 overflow-auto">
-                        {commits.length === 0 ? (
-                            <div className="p-12 text-center text-slate-400">No commit history found.</div>
+                        {filteredCommits.length === 0 ? (
+                            <div className="p-12 text-center text-slate-400">No matching history found.</div>
                         ) : (
                             <table className="w-full text-left">
                                 <thead className="bg-slate-50 text-slate-500 text-xs uppercase sticky top-0">
@@ -401,7 +419,7 @@ export const InventoryDashboard: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    {commits.map(commit => (
+                                    {filteredCommits.map(commit => (
                                         <tr key={commit.id} className="hover:bg-slate-50">
                                             <td className="p-4 text-slate-700">{new Date(commit.created_at).toLocaleString()}</td>
                                             <td className="p-4 font-mono text-sm text-slate-500">#{commit.id}</td>

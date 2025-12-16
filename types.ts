@@ -1,3 +1,4 @@
+
 export enum UserRole {
   ADMIN = 'ADMIN',
   SUB_UNIT = 'SUB_UNIT',
@@ -16,9 +17,9 @@ export interface AppUser {
 
 export enum OrderStatus {
   ASSIGNED = 'ASSIGNED',
-  STARTED = 'STARTED',
+  IN_PROGRESS = 'IN_PROGRESS', // Renamed from STARTED
   QC = 'QC',
-  QC_APPROVED = 'QC_APPROVED', // New Stage
+  QC_APPROVED = 'QC_APPROVED', 
   PACKED = 'PACKED',
   COMPLETED = 'COMPLETED'
 }
@@ -64,8 +65,9 @@ export interface Order {
   box_count?: number; // Planned boxes
   actual_box_count?: number; // Actual boxes at completion
   last_barcode_serial?: number; // Tracks the last serial used for this specific order
-  attachment_url?: string; // URL to the file
-  attachment_name?: string; // Original filename
+  attachment_url?: string; // URL to the spec file
+  attachment_name?: string; // Original spec filename
+  qc_attachment_url?: string; // URL to QC evidence/report file
   size_breakdown?: SizeBreakdown[]; // Planned Breakdown
   completion_breakdown?: SizeBreakdown[]; // Actual Breakdown
   description: string;
@@ -82,6 +84,7 @@ export interface MaterialRequest {
   material_content: string;
   quantity_requested: number;
   quantity_approved: number;
+  unit: string; // New field for Unit (Nos, Kgs, etc.)
   attachment_url?: string; // New field for reference file
   status: MaterialStatus;
   created_at: string;
@@ -133,8 +136,8 @@ export interface Invoice {
 // Helper to determine next status for Order
 export const getNextOrderStatus = (current: OrderStatus): OrderStatus | null => {
   switch (current) {
-    case OrderStatus.ASSIGNED: return OrderStatus.STARTED;
-    case OrderStatus.STARTED: return OrderStatus.QC;
+    case OrderStatus.ASSIGNED: return OrderStatus.IN_PROGRESS;
+    case OrderStatus.IN_PROGRESS: return OrderStatus.QC;
     case OrderStatus.QC: return OrderStatus.QC_APPROVED;
     case OrderStatus.QC_APPROVED: return OrderStatus.COMPLETED; // Logic handled by modal now
     case OrderStatus.PACKED: return OrderStatus.COMPLETED;

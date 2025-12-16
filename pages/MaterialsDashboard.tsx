@@ -1,7 +1,8 @@
+
 import React, { useEffect, useState } from 'react';
 import { fetchMaterialRequests, approveMaterialRequest, fetchOrders, fetchUnits, fetchMaterialApprovals } from '../services/db';
 import { MaterialRequest, MaterialStatus, Order, Unit } from '../types';
-import { Printer, Paperclip, ChevronDown, ChevronUp, Box, ExternalLink, Calendar, AlertCircle } from 'lucide-react';
+import { Printer, Paperclip, ChevronDown, ChevronUp, Box, ExternalLink, Calendar, AlertCircle, Search } from 'lucide-react';
 import { useAuth } from '../components/Layout';
 
 export const MaterialsDashboard: React.FC = () => {
@@ -9,6 +10,7 @@ export const MaterialsDashboard: React.FC = () => {
   const [requests, setRequests] = useState<MaterialRequest[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
   
   // UI State
   const [expandedOrders, setExpandedOrders] = useState<string[]>([]);
@@ -34,8 +36,21 @@ export const MaterialsDashboard: React.FC = () => {
 
   useEffect(() => { load(); }, []);
 
-  // Group requests by Order ID
-  const groupedRequests = requests.reduce((acc, req) => {
+  // Filter requests based on search
+  const filteredRequests = requests.filter(req => {
+      if (!searchTerm) return true;
+      const term = searchTerm.toLowerCase();
+      const order = orders.find(o => o.id === req.order_id);
+      
+      const orderMatch = order?.order_no.toLowerCase().includes(term);
+      const styleMatch = order?.style_number.toLowerCase().includes(term);
+      const contentMatch = req.material_content.toLowerCase().includes(term);
+
+      return orderMatch || styleMatch || contentMatch;
+  });
+
+  // Group filtered requests by Order ID
+  const groupedRequests = filteredRequests.reduce((acc, req) => {
       if (!acc[req.order_id]) acc[req.order_id] = [];
       acc[req.order_id].push(req);
       return acc;
@@ -57,6 +72,8 @@ export const MaterialsDashboard: React.FC = () => {
     const approvals = await fetchMaterialApprovals(req.id);
     
     // 2. Generate Rows
+    // We use the 'req' object passed in for the final totals to ensure accuracy
+    // even if the fetch hasn't fully propagated yet in the backend/mock.
     let runningTotal = 0;
     const rowsHtml = approvals.map(app => {
         runningTotal += app.qty_approved;
@@ -68,7 +85,7 @@ export const MaterialsDashboard: React.FC = () => {
         `;
     }).join('');
 
-    const remaining = req.quantity_requested - runningTotal;
+    const remaining = req.quantity_requested - req.quantity_approved;
 
     const win = window.open('', 'Receipt', 'width=400,height=600');
     if (win) {
@@ -108,13 +125,13 @@ export const MaterialsDashboard: React.FC = () => {
                         </tr>
                     </thead>
                     <tbody>
-                        ${rowsHtml}
+                        ${rowsHtml || '<tr><td colspan="2" style="text-align:center; padding:10px;">-- Update Pending --</td></tr>'}
                     </tbody>
                 </table>
 
                 <div class="summary">
-                    <div>TOTAL REQUESTED: ${req.quantity_requested}</div>
-                    <div>TOTAL APPROVED: ${runningTotal}</div>
+                    <div>TOTAL REQUESTED: ${req.quantity_requested} ${req.unit || 'Nos'}</div>
+                    <div>TOTAL APPROVED: ${req.quantity_approved}</div>
                     <div style="margin-top:5px; font-size:1.1em;">REMAINING: ${remaining}</div>
                 </div>
 
@@ -168,17 +185,31 @@ export const MaterialsDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
         <h2 className="text-2xl font-bold text-slate-800">Materials Requisition Hub</h2>
-        <div className="text-sm text-slate-500 bg-white px-3 py-1 rounded-full shadow-sm border">
-            {requests.filter(r => r.status === MaterialStatus.PENDING).length} Pending Requests
+        
+        <div className="flex items-center gap-4 w-full md:w-auto">
+            <div className="relative flex-1 md:w-64">
+                <input 
+                    type="text"
+                    placeholder="Search Order No, Style, or Item..."
+                    className="pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-full shadow-sm bg-white text-slate-900"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
+            </div>
+            
+            <div className="text-sm text-slate-500 bg-white px-3 py-2 rounded-lg shadow-sm border whitespace-nowrap">
+                {requests.filter(r => r.status === MaterialStatus.PENDING).length} Pending
+            </div>
         </div>
       </div>
       
       {Object.keys(groupedRequests).length === 0 ? (
           <div className="text-center p-12 bg-white rounded-xl shadow-sm border border-slate-200 text-slate-400">
               <Box size={48} className="mx-auto mb-3 opacity-50"/>
-              <p className="text-lg font-medium">No material requests found.</p>
+              <p className="text-lg font-medium">{searchTerm ? 'No matching requests found.' : 'No material requests found.'}</p>
           </div>
       ) : (
           <div className="space-y-6">
@@ -234,6 +265,7 @@ export const MaterialsDashboard: React.FC = () => {
                                             <th className="p-4 pl-6">Material Item</th>
                                             <th className="p-4 w-32 text-center">Reference</th>
                                             <th className="p-4 text-center">Requested</th>
+                                            <th className="p-4 text-center">Unit</th>
                                             <th className="p-4 text-center">Approved</th>
                                             <th className="p-4 text-center">Status</th>
                                             <th className="p-4 text-right pr-6">Action</th>
@@ -268,6 +300,9 @@ export const MaterialsDashboard: React.FC = () => {
                                                     </td>
                                                     <td className="p-4 text-center font-mono font-bold text-slate-600 bg-slate-50/30">
                                                         {req.quantity_requested}
+                                                    </td>
+                                                    <td className="p-4 text-center text-slate-500">
+                                                        {req.unit || 'Nos'}
                                                     </td>
                                                     <td className="p-4 text-center font-mono font-bold text-green-600">
                                                         {req.quantity_approved}
@@ -326,7 +361,7 @@ export const MaterialsDashboard: React.FC = () => {
                 <div className="mb-4 grid grid-cols-2 gap-2 text-sm">
                      <div className="bg-slate-50 p-2 rounded border border-slate-100">
                         <span className="block text-xs text-slate-400 uppercase font-bold">Requested</span>
-                        <b className="text-lg text-slate-800">{approvalModal.quantity_requested}</b>
+                        <b className="text-lg text-slate-800">{approvalModal.quantity_requested} <small className="text-xs font-normal">{approvalModal.unit || 'Nos'}</small></b>
                      </div>
                      <div className="bg-green-50 p-2 rounded border border-green-100">
                         <span className="block text-xs text-green-600 uppercase font-bold">Approved</span>
@@ -344,7 +379,7 @@ export const MaterialsDashboard: React.FC = () => {
                         max={approvalModal.quantity_requested - approvalModal.quantity_approved}
                         min={0}
                         onChange={(e) => setApproveQty(parseFloat(e.target.value))}
-                        className="w-full text-3xl font-mono border-b-2 border-indigo-500 focus:outline-none py-1 text-indigo-900 bg-white text-black"
+                        className="w-full text-3xl font-mono border-b-2 border-indigo-500 focus:outline-none py-1 text-indigo-900 bg-white text-slate-900"
                     />
                     <div className="flex justify-between text-xs mt-2 text-slate-400">
                         <span>Min: 0</span>

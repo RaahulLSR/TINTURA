@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { OrderStatus, BarcodeStatus } from '../types';
 
@@ -7,7 +8,7 @@ export const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   switch (status) {
     // Order Statuses
     case OrderStatus.ASSIGNED: colorClass = 'bg-blue-100 text-blue-800 border-blue-200'; break;
-    case OrderStatus.STARTED: colorClass = 'bg-yellow-100 text-yellow-800 border-yellow-200'; break;
+    case OrderStatus.IN_PROGRESS: colorClass = 'bg-yellow-100 text-yellow-800 border-yellow-200'; break;
     case OrderStatus.QC: colorClass = 'bg-orange-100 text-orange-800 border-orange-200'; break;
     case OrderStatus.QC_APPROVED: colorClass = 'bg-teal-100 text-teal-800 border-teal-200'; break;
     case OrderStatus.PACKED: colorClass = 'bg-purple-100 text-purple-800 border-purple-200'; break;
