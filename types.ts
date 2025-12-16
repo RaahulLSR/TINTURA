@@ -141,6 +141,39 @@ export interface Invoice {
   created_at: string;
 }
 
+// --- FABRIC MANAGEMENT TYPES ---
+
+export interface FabricLot {
+    id: number;
+    date: string; // Arrival Date
+    dc_no: string;
+    source_from: string;
+    lot_no: string;
+    fabric_color: string;
+    dia: string;
+    roll_count: number;
+    total_kg: number;
+    plan_to: string; // Editable
+    review_notes?: string;
+    created_at?: string;
+    // Calculated fields (Frontend only, computed from logs)
+    used_fabric?: number;
+    balance_fabric?: number;
+}
+
+export interface FabricUsageLog {
+    id: number;
+    fabric_lot_id: number;
+    date_time: string;
+    used_kg: number;
+    order_style_ref: string;
+    action_type: 'ADD' | 'EDIT' | 'DELETE';
+    previous_value?: number;
+    new_value?: number;
+    remarks?: string;
+    updated_by?: string;
+}
+
 // Helper to determine next status for Order
 export const getNextOrderStatus = (current: OrderStatus): OrderStatus | null => {
   switch (current) {

@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState } from 'react';
-import { fetchOrders, updateOrderStatus, generateBarcodes, createMaterialRequest, fetchMaterialRequests, uploadOrderAttachment, addOrderLog, fetchOrderLogs, updateMaterialRequest, deleteMaterialRequest } from '../services/db';
-import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog, Attachment, MaterialStatus } from '../types';
+import { fetchOrders, updateOrderStatus, generateBarcodes, createMaterialRequest, fetchMaterialRequests, uploadOrderAttachment, addOrderLog, fetchOrderLogs, updateMaterialRequest, deleteMaterialRequest, fetchFabricLots, addFabricLot, logFabricUsage, updateFabricLotPlan, fetchFabricLogs } from '../services/db';
+import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog, Attachment, MaterialStatus, FabricLot, FabricUsageLog } from '../types';
 import { StatusBadge, BulkActionToolbar } from '../components/Widgets';
-import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, X, Eye, CheckCircle2, History, ListTodo, Archive, FileText, Download, Plus, Trash2, Paperclip, Calculator, Clock, MessageSquare, Send, Search, ArrowLeftRight, Minimize2, Maximize2, Pencil, Filter, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, X, Eye, CheckCircle2, History, ListTodo, Archive, FileText, Download, Plus, Trash2, Paperclip, Calculator, Clock, MessageSquare, Send, Search, ArrowLeftRight, Minimize2, Maximize2, Pencil, Filter, ChevronRight, ChevronDown, ChevronUp, Layers, PenLine, RotateCcw, PlusCircle } from 'lucide-react';
 
 // Hardcoded ID for this specific Subunit Dashboard instance
 const CURRENT_UNIT_ID = 2; // Sewing Unit A
@@ -21,7 +21,7 @@ interface MaterialRow {
 
 export const SubunitDashboard: React.FC = () => {
   const [orders, setOrders] = useState<Order[]>([]);
-  const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'history' | 'fabric'>('active');
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -52,6 +52,33 @@ export const SubunitDashboard: React.FC = () => {
       actualBoxCount: number
   } | null>(null);
 
+  // Fabric Management State
+  const [fabricLots, setFabricLots] = useState<FabricLot[]>([]);
+  const [fabricModalOpen, setFabricModalOpen] = useState(false);
+  const [fabricUsageModalOpen, setFabricUsageModalOpen] = useState(false);
+  const [selectedFabricLot, setSelectedFabricLot] = useState<FabricLot | null>(null);
+  const [fabricLogs, setFabricLogs] = useState<FabricUsageLog[]>([]);
+  const [showFabricHistory, setShowFabricHistory] = useState(false);
+
+  const [newFabricLot, setNewFabricLot] = useState<Partial<FabricLot>>({
+      date: new Date().toISOString().split('T')[0],
+      dc_no: '',
+      source_from: '',
+      lot_no: '',
+      fabric_color: '',
+      dia: '',
+      roll_count: 0,
+      total_kg: 0,
+      plan_to: '',
+      review_notes: ''
+  });
+
+  const [fabricUsageForm, setFabricUsageForm] = useState({
+      usedKg: 0,
+      orderRef: '',
+      remarks: ''
+  });
+
   // Size Header Toggle State (Now mainly for internal logic display, auto-set by order format)
   const [useNumericSizes, setUseNumericSizes] = useState(false);
 
@@ -81,9 +108,15 @@ export const SubunitDashboard: React.FC = () => {
     });
   };
 
+  const loadFabricData = async () => {
+      const lots = await fetchFabricLots();
+      setFabricLots(lots);
+  }
+
   useEffect(() => {
     refreshOrders();
-  }, [loading]);
+    if (activeTab === 'fabric') loadFabricData();
+  }, [loading, activeTab]);
 
   // Derived state for filtered orders
   const displayedOrders = orders.filter(o => {
@@ -131,6 +164,64 @@ export const SubunitDashboard: React.FC = () => {
         await updateOrderStatus(id, next);
         setLoading(false);
     }
+  };
+
+  // --- FABRIC HANDLERS ---
+  const handleAddFabricLot = async (e: React.FormEvent) => {
+      e.preventDefault();
+      await addFabricLot(newFabricLot);
+      setFabricModalOpen(false);
+      setNewFabricLot({
+        date: new Date().toISOString().split('T')[0],
+        dc_no: '',
+        source_from: '',
+        lot_no: '',
+        fabric_color: '',
+        dia: '',
+        roll_count: 0,
+        total_kg: 0,
+        plan_to: '',
+        review_notes: ''
+      });
+      loadFabricData();
+  };
+
+  const handleOpenUsageModal = (lot: FabricLot) => {
+      setSelectedFabricLot(lot);
+      setFabricUsageForm({ usedKg: 0, orderRef: '', remarks: '' });
+      setFabricUsageModalOpen(true);
+  };
+
+  const handleSubmitUsage = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!selectedFabricLot) return;
+
+      if (fabricUsageForm.usedKg <= 0) {
+          alert("Used quantity must be greater than 0");
+          return;
+      }
+
+      const currentBalance = selectedFabricLot.balance_fabric ?? selectedFabricLot.total_kg;
+      if (fabricUsageForm.usedKg > currentBalance) {
+          alert(`Cannot use ${fabricUsageForm.usedKg} KG. Only ${currentBalance} KG available.`);
+          return;
+      }
+
+      await logFabricUsage(selectedFabricLot.id, fabricUsageForm.usedKg, fabricUsageForm.orderRef, fabricUsageForm.remarks);
+      setFabricUsageModalOpen(false);
+      loadFabricData();
+  };
+
+  const handleUpdatePlan = async (lotId: number, newPlan: string) => {
+      await updateFabricLotPlan(lotId, newPlan);
+      loadFabricData();
+  };
+
+  const handleViewFabricHistory = async (lot: FabricLot) => {
+      setSelectedFabricLot(lot);
+      const logs = await fetchFabricLogs(lot.id);
+      setFabricLogs(logs);
+      setShowFabricHistory(true);
   };
 
   // --- Timeline Logic ---
@@ -814,7 +905,7 @@ export const SubunitDashboard: React.FC = () => {
             <div className="relative w-full md:w-64">
                 <input 
                     type="text"
-                    placeholder="Search Order..."
+                    placeholder="Search..."
                     className="pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-full bg-white text-slate-900 shadow-sm"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
@@ -839,7 +930,7 @@ export const SubunitDashboard: React.FC = () => {
                         : 'text-slate-500 hover:bg-slate-50'
                     }`}
                 >
-                    <ListTodo size={16}/> Active Jobs
+                    <ListTodo size={16}/> Active
                 </button>
                 <button 
                     onClick={() => setActiveTab('history')}
@@ -849,13 +940,115 @@ export const SubunitDashboard: React.FC = () => {
                         : 'text-slate-500 hover:bg-slate-50'
                     }`}
                 >
-                    <History size={16}/> Order History
+                    <History size={16}/> History
+                </button>
+                <button 
+                    onClick={() => setActiveTab('fabric')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                        activeTab === 'fabric' 
+                        ? 'bg-indigo-600 text-white shadow-sm' 
+                        : 'text-slate-500 hover:bg-slate-50'
+                    }`}
+                >
+                    <Layers size={16}/> Fabric
                 </button>
             </div>
         </div>
       </div>
       
-      {/* ... (Orders Table code remains unchanged) ... */}
+      {/* --- FABRIC TAB --- */}
+      {activeTab === 'fabric' && (
+          <div className="space-y-4 animate-fade-in">
+              <div className="flex justify-between items-center">
+                  <h3 className="text-lg font-bold text-slate-900">Fabric Inventory Lots</h3>
+                  <button 
+                      onClick={() => setFabricModalOpen(true)}
+                      className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-indigo-700 shadow-sm"
+                  >
+                      <PlusCircle size={18}/> New Fabric Lot
+                  </button>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm border border-slate-300 overflow-hidden overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                      <thead className="bg-white text-slate-900 font-bold uppercase border-b-2 border-slate-200">
+                          <tr>
+                              <th className="p-4">Date</th>
+                              <th className="p-4">Lot No / DC</th>
+                              <th className="p-4">Fabric Details</th>
+                              <th className="p-4 text-center">Total KG</th>
+                              <th className="p-4 text-center">Used</th>
+                              <th className="p-4 text-center">Balance</th>
+                              <th className="p-4">Plan To</th>
+                              <th className="p-4 text-right">Actions</th>
+                          </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                          {fabricLots.map(lot => {
+                              const balance = lot.balance_fabric ?? lot.total_kg;
+                              const isLow = balance < (lot.total_kg * 0.1);
+                              return (
+                                  <tr key={lot.id} className="hover:bg-slate-50 transition bg-white text-slate-900">
+                                      <td className="p-4 whitespace-nowrap">{lot.date}</td>
+                                      <td className="p-4">
+                                          <div className="font-bold text-black">{lot.lot_no}</div>
+                                          <div className="text-xs text-slate-800">DC: {lot.dc_no}</div>
+                                          <div className="text-xs text-slate-600">{lot.source_from}</div>
+                                      </td>
+                                      <td className="p-4">
+                                          <div className="font-medium text-black">{lot.fabric_color}</div>
+                                          <div className="text-xs text-slate-700">Dia: {lot.dia} &bull; Rolls: {lot.roll_count}</div>
+                                      </td>
+                                      <td className="p-4 text-center font-mono font-bold text-black">{lot.total_kg}</td>
+                                      <td className="p-4 text-center font-mono text-orange-700 font-bold">{lot.used_fabric?.toFixed(2)}</td>
+                                      <td className="p-4 text-center">
+                                          <span className={`px-2 py-1 rounded font-mono font-bold ${isLow ? 'bg-red-100 text-red-900' : 'bg-green-100 text-green-900'}`}>
+                                              {balance.toFixed(2)}
+                                          </span>
+                                      </td>
+                                      <td className="p-4">
+                                          <div className="flex items-center gap-2">
+                                              <span className="text-sm font-medium text-slate-900">{lot.plan_to || 'Unplanned'}</span>
+                                              <button 
+                                                  onClick={() => {
+                                                      const newPlan = prompt("Update Planning:", lot.plan_to);
+                                                      if(newPlan !== null) handleUpdatePlan(lot.id, newPlan);
+                                                  }}
+                                                  className="text-slate-600 hover:text-indigo-700"
+                                              >
+                                                  <PenLine size={14}/>
+                                              </button>
+                                          </div>
+                                      </td>
+                                      <td className="p-4 text-right flex justify-end gap-2">
+                                          <button 
+                                              onClick={() => handleOpenUsageModal(lot)}
+                                              className="bg-white border border-slate-400 hover:bg-slate-100 text-slate-900 px-3 py-1.5 rounded text-xs font-bold"
+                                          >
+                                              Update Usage
+                                          </button>
+                                          <button 
+                                              onClick={() => handleViewFabricHistory(lot)}
+                                              className="text-indigo-700 hover:bg-indigo-50 p-2 rounded"
+                                              title="View History"
+                                          >
+                                              <History size={18}/>
+                                          </button>
+                                      </td>
+                                  </tr>
+                              )
+                          })}
+                          {fabricLots.length === 0 && (
+                              <tr><td colSpan={8} className="p-8 text-center text-slate-900 font-medium">No fabric lots added yet.</td></tr>
+                          )}
+                      </tbody>
+                  </table>
+              </div>
+          </div>
+      )}
+
+      {/* --- ORDERS TABLE (Active/History) --- */}
+      {activeTab !== 'fabric' && (
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         {displayedOrders.length === 0 ? (
             <div className="p-12 text-center text-slate-400">
@@ -983,6 +1176,7 @@ export const SubunitDashboard: React.FC = () => {
             </table>
         )}
       </div>
+      )}
 
       {/* ... (Existing Modals and Toolbars) ... */}
       {activeTab === 'active' && (
@@ -994,10 +1188,162 @@ export const SubunitDashboard: React.FC = () => {
         />
       )}
 
-      {/* ... (Details, Completion, Barcode, Material Request, Qty Filter, Timeline Modals - remain same) ... */}
+      {/* NEW FABRIC MODAL */}
+      {fabricModalOpen && (
+          <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-scale-up">
+                  <div className="p-6 border-b flex justify-between items-center bg-indigo-50">
+                      <h3 className="text-xl font-bold text-indigo-900">Add New Fabric Lot</h3>
+                      <button onClick={() => setFabricModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
+                  </div>
+                  <form onSubmit={handleAddFabricLot} className="p-6 space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="block text-sm font-bold text-slate-800 mb-1">Arrival Date</label>
+                              <input required type="date" className="w-full border border-slate-300 rounded p-2 bg-white text-black" value={newFabricLot.date} onChange={e => setNewFabricLot({...newFabricLot, date: e.target.value})} />
+                          </div>
+                          <div>
+                              <label className="block text-sm font-bold text-slate-800 mb-1">DC Number</label>
+                              <input required className="w-full border border-slate-300 rounded p-2 bg-white text-black" value={newFabricLot.dc_no} onChange={e => setNewFabricLot({...newFabricLot, dc_no: e.target.value})} />
+                          </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="block text-sm font-bold text-slate-800 mb-1">Source / Supplier</label>
+                              <input required className="w-full border border-slate-300 rounded p-2 bg-white text-black" value={newFabricLot.source_from} onChange={e => setNewFabricLot({...newFabricLot, source_from: e.target.value})} />
+                          </div>
+                          <div>
+                              <label className="block text-sm font-bold text-slate-800 mb-1">Lot Number</label>
+                              <input required className="w-full border border-slate-300 rounded p-2 bg-white text-black" value={newFabricLot.lot_no} onChange={e => setNewFabricLot({...newFabricLot, lot_no: e.target.value})} />
+                          </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4">
+                          <div>
+                              <label className="block text-sm font-bold text-slate-800 mb-1">Color</label>
+                              <input required className="w-full border border-slate-300 rounded p-2 bg-white text-black" value={newFabricLot.fabric_color} onChange={e => setNewFabricLot({...newFabricLot, fabric_color: e.target.value})} />
+                          </div>
+                          <div>
+                              <label className="block text-sm font-bold text-slate-800 mb-1">Dia</label>
+                              <input className="w-full border border-slate-300 rounded p-2 bg-white text-black" value={newFabricLot.dia} onChange={e => setNewFabricLot({...newFabricLot, dia: e.target.value})} />
+                          </div>
+                          <div>
+                              <label className="block text-sm font-bold text-slate-800 mb-1">Roll Count</label>
+                              <input type="number" className="w-full border border-slate-300 rounded p-2 bg-white text-black" value={newFabricLot.roll_count} onChange={e => setNewFabricLot({...newFabricLot, roll_count: parseInt(e.target.value) || 0})} />
+                          </div>
+                      </div>
+                      <div>
+                          <label className="block text-sm font-bold text-slate-800 mb-1">Total Weight (KG)</label>
+                          <input required type="number" step="0.01" className="w-full border border-slate-300 rounded p-2 text-lg font-bold bg-white text-black" value={newFabricLot.total_kg} onChange={e => setNewFabricLot({...newFabricLot, total_kg: parseFloat(e.target.value) || 0})} />
+                      </div>
+                      <div>
+                          <label className="block text-sm font-bold text-slate-800 mb-1">Plan To (Optional)</label>
+                          <input className="w-full border border-slate-300 rounded p-2 bg-white text-black" placeholder="e.g. Order 1001" value={newFabricLot.plan_to} onChange={e => setNewFabricLot({...newFabricLot, plan_to: e.target.value})} />
+                      </div>
+                      <div>
+                          <label className="block text-sm font-bold text-slate-800 mb-1">Remarks</label>
+                          <textarea className="w-full border border-slate-300 rounded p-2 bg-white text-black" rows={2} value={newFabricLot.review_notes} onChange={e => setNewFabricLot({...newFabricLot, review_notes: e.target.value})} />
+                      </div>
+                      <div className="pt-4 border-t flex justify-end gap-2">
+                          <button type="button" onClick={() => setFabricModalOpen(false)} className="px-4 py-2 text-slate-900 bg-white border border-slate-300 hover:bg-slate-50 rounded font-bold">Cancel</button>
+                          <button type="submit" className="px-6 py-2 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 shadow">Save Lot</button>
+                      </div>
+                  </form>
+              </div>
+          </div>
+      )}
+
+      {/* FABRIC USAGE MODAL */}
+      {fabricUsageModalOpen && selectedFabricLot && (
+          <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-up">
+                  <div className="p-6 border-b bg-indigo-50">
+                      <h3 className="text-xl font-bold text-indigo-900">Update Fabric Usage</h3>
+                      <p className="text-sm text-indigo-600">Lot: {selectedFabricLot.lot_no} | Balance: {selectedFabricLot.balance_fabric} KG</p>
+                  </div>
+                  <form onSubmit={handleSubmitUsage} className="p-6 space-y-4">
+                      <div>
+                          <label className="block text-sm font-bold text-slate-800 mb-1">Used Quantity (KG)</label>
+                          <input 
+                              required type="number" step="0.01" autoFocus
+                              className="w-full border-b-2 border-indigo-500 text-3xl font-mono focus:outline-none py-1 bg-white text-black" 
+                              value={fabricUsageForm.usedKg} 
+                              onChange={e => setFabricUsageForm({...fabricUsageForm, usedKg: parseFloat(e.target.value) || 0})} 
+                          />
+                      </div>
+                      <div>
+                          <label className="block text-sm font-bold text-slate-800 mb-1">For Order / Style</label>
+                          <select 
+                              className="w-full border border-slate-300 rounded p-2 bg-white text-black"
+                              value={fabricUsageForm.orderRef}
+                              onChange={e => setFabricUsageForm({...fabricUsageForm, orderRef: e.target.value})}
+                              required
+                          >
+                              <option value="">-- Select Order --</option>
+                              {orders.filter(o => o.status !== OrderStatus.COMPLETED).map(o => (
+                                  <option key={o.id} value={`${o.order_no} (${o.style_number})`}>
+                                      {o.order_no} - {o.style_number}
+                                  </option>
+                              ))}
+                              <option value="SAMPLING">Sampling / Other</option>
+                          </select>
+                      </div>
+                      <div>
+                          <label className="block text-sm font-bold text-slate-800 mb-1">Remarks</label>
+                          <input className="w-full border border-slate-300 rounded p-2 bg-white text-black" placeholder="e.g. Cutting Table 1" value={fabricUsageForm.remarks} onChange={e => setFabricUsageForm({...fabricUsageForm, remarks: e.target.value})} />
+                      </div>
+                      <div className="pt-4 border-t flex justify-end gap-2">
+                          <button type="button" onClick={() => setFabricUsageModalOpen(false)} className="px-4 py-2 text-slate-900 bg-white border border-slate-300 hover:bg-slate-50 rounded font-bold">Cancel</button>
+                          <button type="submit" className="px-6 py-2 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 shadow">Confirm Usage</button>
+                      </div>
+                  </form>
+              </div>
+          </div>
+      )}
+
+      {/* FABRIC HISTORY MODAL */}
+      {showFabricHistory && selectedFabricLot && (
+          <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden h-[80vh] flex flex-col">
+                  <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+                      <div>
+                          <h3 className="text-xl font-bold text-slate-800">Usage History</h3>
+                          <p className="text-xs text-slate-500">Lot: {selectedFabricLot.lot_no} | Total: {selectedFabricLot.total_kg} KG</p>
+                      </div>
+                      <button onClick={() => setShowFabricHistory(false)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
+                  </div>
+                  <div className="flex-1 overflow-auto p-4">
+                      <table className="w-full text-left text-sm">
+                          <thead className="bg-slate-50 text-slate-800 uppercase text-xs sticky top-0 font-bold">
+                              <tr>
+                                  <th className="p-3">Date</th>
+                                  <th className="p-3">Reference</th>
+                                  <th className="p-3">Used KG</th>
+                                  <th className="p-3">Remarks</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                              {fabricLogs.map(log => (
+                                  <tr key={log.id}>
+                                      <td className="p-3 text-slate-800">{new Date(log.date_time).toLocaleString()}</td>
+                                      <td className="p-3 font-bold text-black">{log.order_style_ref}</td>
+                                      <td className="p-3 font-mono text-red-600 font-bold">-{log.used_kg}</td>
+                                      <td className="p-3 text-slate-800">{log.remarks || '-'}</td>
+                                  </tr>
+                              ))}
+                              {fabricLogs.length === 0 && <tr><td colSpan={4} className="p-4 text-center text-slate-800">No usage recorded yet.</td></tr>}
+                          </tbody>
+                      </table>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* ... (Rest of existing Modals) ... */}
+      {/* (Including Details Modal, Completion Modal, Barcode Modal, etc.) */}
       {/* Details Modal */}
       {detailsModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+            {/* ... (Existing Details Modal Implementation - Same as before) ... */}
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden max-h-[90vh] flex flex-col">
                 <div className="p-6 border-b flex justify-between items-center bg-slate-50">
                     <h3 className="text-xl font-bold text-slate-800">{detailsModal.order_no}</h3>
@@ -1191,10 +1537,7 @@ export const SubunitDashboard: React.FC = () => {
           </div>
       )}
 
-      {/* Barcode Modal, Material Modal, Qty Filter, Timeline Modal */}
-      {/* (Keep existing render blocks, e.g. barcodeModal, materialModal, etc.) */}
-      
-      {/* ... (Existing Modal Renders) ... */}
+      {/* Barcode Modal */}
       {barcodeModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
             <div className="bg-white p-8 rounded-xl shadow-2xl w-96 animate-scale-up">
@@ -1242,7 +1585,7 @@ export const SubunitDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Material Modal */}
+      {/* Material Modal (Collapsed/Expanded logic preserved) */}
       {materialModal && (
         <>
             {isMaterialModalMinimized ? (
@@ -1257,6 +1600,7 @@ export const SubunitDashboard: React.FC = () => {
             ) : (
                 <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden animate-scale-up flex flex-col max-h-[90vh]">
+                        {/* ... (Existing Material Modal Content) ... */}
                         <div className="p-6 border-b flex justify-between items-center bg-indigo-50">
                             <h3 className="text-xl font-bold text-indigo-900 flex items-center gap-2">
                                 <PackagePlus/> {isEditingRequest ? 'Edit Material Request' : 'Request Materials'}
@@ -1287,7 +1631,7 @@ export const SubunitDashboard: React.FC = () => {
                         )}
 
                         <form onSubmit={handleSubmitRequest} className="p-6 flex-1 overflow-y-auto">
-                            {/* ... (Form Content Same as before) ... */}
+                            {/* ... (Form Body) ... */}
                             {reqTab === 'direct' ? (
                                 <div className="space-y-6">
                                     {!isEditingRequest && (
@@ -1491,6 +1835,7 @@ export const SubunitDashboard: React.FC = () => {
       {/* Qty Filter Modal */}
       {qtyFilterModal.isOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+              {/* ... (Existing Qty Filter Modal Content) ... */}
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden animate-scale-up flex flex-col max-h-[80vh]">
                   <div className="p-6 border-b flex justify-between items-center bg-slate-50">
                       <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
