@@ -159,9 +159,9 @@ export const MaterialsDashboard: React.FC = () => {
                 <div class="brand">TINTURA SST</div>
                 <div class="title">ACCESSORIES REQUIREMENT RECEIPT</div>
                 <div class="meta">
-                    <strong>ORDER NO:</strong> ${order.order_no} &nbsp;|&nbsp; 
-                    <strong>STYLE:</strong> ${order.style_number} &nbsp;|&nbsp; 
-                    <strong>DATE:</strong> ${new Date().toLocaleDateString()}
+                    ORDER NO: ${order.order_no} &nbsp;|&nbsp; 
+                    STYLE: ${order.style_number} &nbsp;|&nbsp; 
+                    DATE: ${new Date().toLocaleDateString()}
                 </div>
             </div>
           `;
@@ -176,10 +176,10 @@ export const MaterialsDashboard: React.FC = () => {
                         body { -webkit-print-color-adjust: exact; }
                     }
                     body { font-family: 'Arial', sans-serif; padding: 40px; color: #333; }
-                    .header { text-align: center; border-bottom: 2px solid #000; margin-bottom: 20px; padding-bottom: 10px; }
-                    .brand { font-size: 24px; font-weight: 900; margin-bottom: 5px; }
-                    .title { font-size: 18px; font-weight: bold; text-transform: uppercase; margin-bottom: 10px; }
-                    .meta { font-size: 12px; background: #eee; padding: 5px; }
+                    .header { text-align: center; border-bottom: 3px solid #000; margin-bottom: 25px; padding-bottom: 15px; }
+                    .brand { font-size: 24px; font-weight: 900; margin-bottom: 5px; letter-spacing: 1px; }
+                    .title { font-size: 20px; font-weight: bold; text-transform: uppercase; margin-bottom: 15px; }
+                    .meta { font-size: 16px; font-weight: 800; background: #eee; padding: 10px; border: 1px solid #000; text-align: center; }
                     .page-title { font-size: 14px; font-weight: bold; text-transform: uppercase; margin-bottom: 10px; text-align:left; border-left: 5px solid #000; padding-left: 10px; }
                     table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; }
                     th, td { border: 1px solid #ccc; padding: 8px; }

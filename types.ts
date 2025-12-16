@@ -72,6 +72,8 @@ export interface Order {
   actual_box_count?: number; // Actual boxes at completion
   last_barcode_serial?: number; // Tracks the last serial used for this specific order
   attachments?: Attachment[]; // Array of attachments
+  attachment_url?: string; // Legacy: Single URL
+  attachment_name?: string; // Legacy: Single Filename
   qc_attachment_url?: string; // URL to QC evidence/report file
   size_breakdown?: SizeBreakdown[]; // Planned Breakdown
   completion_breakdown?: SizeBreakdown[]; // Actual Breakdown

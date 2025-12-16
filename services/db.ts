@@ -140,7 +140,11 @@ export const fetchOrders = async (): Promise<Order[]> => {
 };
 
 export const createOrder = async (order: Partial<Order>): Promise<Order | null> => {
-    const { data, error } = await supabase.from('orders').insert([{
+    // Map attachments array to legacy columns if needed for backward compatibility
+    const legacyUrl = order.attachments && order.attachments.length > 0 ? order.attachments[0].url : null;
+    const legacyName = order.attachments && order.attachments.length > 0 ? order.attachments[0].name : null;
+
+    const payload: any = {
         unit_id: order.unit_id,
         style_number: order.style_number,
         quantity: order.quantity,
@@ -149,10 +153,18 @@ export const createOrder = async (order: Partial<Order>): Promise<Order | null> 
         description: order.description,
         target_delivery_date: order.target_delivery_date,
         last_barcode_serial: 0,
-        attachments: order.attachments || [],
         size_format: order.size_format || 'standard',
+        attachments: order.attachments || [],
         status: OrderStatus.ASSIGNED
-    }]).select().single();
+    };
+
+    // Only add legacy fields if they exist
+    if (legacyUrl) {
+        payload.attachment_url = legacyUrl;
+        payload.attachment_name = legacyName;
+    }
+
+    const { data, error } = await supabase.from('orders').insert([payload]).select().single();
 
     if (error) {
         console.error("Supabase Create Error (Using Mock):", error.message);
@@ -162,7 +174,8 @@ export const createOrder = async (order: Partial<Order>): Promise<Order | null> 
             id: Math.random().toString(), 
             status: OrderStatus.ASSIGNED,
             last_barcode_serial: 0,
-            size_format: order.size_format || 'standard'
+            size_format: order.size_format || 'standard',
+            attachments: order.attachments || [] 
         } as Order;
         MOCK_ORDERS.push(newOrder);
         // Log Mock
@@ -217,10 +230,20 @@ export const updateOrderStatus = async (
 };
 
 export const updateOrderDetails = async (orderId: string, updates: Partial<Order>) => {
-    const { error } = await supabase.from('orders').update(updates).eq('id', orderId);
+    // Sanitize updates if needed, but we keep attachments/size_format now
+    const safeUpdates = { ...updates };
+    
+    // If attachments are being updated, try to map to legacy if needed
+    if (updates.attachments && updates.attachments.length > 0) {
+        (safeUpdates as any).attachment_url = updates.attachments[0].url;
+        (safeUpdates as any).attachment_name = updates.attachments[0].name;
+    }
+
+    const { error } = await supabase.from('orders').update(safeUpdates).eq('id', orderId);
 
     if (error) {
         console.warn("Update Failed (Using Mock):", error.message);
+        // Apply full updates to mock including attachments array
         MOCK_ORDERS = MOCK_ORDERS.map(o => o.id === orderId ? { ...o, ...updates } : o);
     }
     
@@ -244,7 +267,7 @@ export const createMaterialRequest = async (req: Partial<MaterialRequest>) => {
         material_content: req.material_content,
         quantity_requested: req.quantity_requested,
         unit: req.unit || 'Nos',
-        attachments: req.attachments || [],
+        attachments: req.attachments || [], 
         status: MaterialStatus.PENDING
     }]);
 
@@ -265,6 +288,14 @@ export const updateMaterialRequest = async (id: string, updates: Partial<Materia
     if (error) {
         console.warn("Req Update Failed (Using Mock):", error.message);
         MOCK_REQUESTS = MOCK_REQUESTS.map(r => r.id === id ? { ...r, ...updates } : r);
+    }
+};
+
+export const deleteMaterialRequest = async (id: string) => {
+    const { error } = await supabase.from('material_requests').delete().eq('id', id);
+    if (error) {
+        console.warn("Req Delete Failed (Using Mock):", error.message);
+        MOCK_REQUESTS = MOCK_REQUESTS.filter(r => r.id !== id);
     }
 };
 

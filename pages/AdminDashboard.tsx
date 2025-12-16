@@ -245,7 +245,8 @@ export const AdminDashboard: React.FC = () => {
       
       const updates: Partial<Order> = {
           ...editFormData,
-          quantity: newQty
+          quantity: newQty,
+          size_format: useNumericSizes ? 'numeric' : 'standard' // Persist the toggle choice
       };
 
       await updateOrderDetails(detailsModal.id, updates);
