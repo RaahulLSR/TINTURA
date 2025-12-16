@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { fetchOrders, updateOrderStatus, generateBarcodes, createMaterialRequest, fetchMaterialRequests, uploadOrderAttachment, addOrderLog, fetchOrderLogs } from '../services/db';
 import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog } from '../types';
 import { StatusBadge, BulkActionToolbar } from '../components/Widgets';
-import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, X, Eye, CheckCircle2, History, ListTodo, Archive, FileText, Download, Plus, Trash2, Paperclip, Calculator, Clock, MessageSquare, Send, Search } from 'lucide-react';
+import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, X, Eye, CheckCircle2, History, ListTodo, Archive, FileText, Download, Plus, Trash2, Paperclip, Calculator, Clock, MessageSquare, Send, Search, ArrowLeftRight } from 'lucide-react';
 
 // Hardcoded ID for this specific Subunit Dashboard instance
 const CURRENT_UNIT_ID = 2; // Sewing Unit A
@@ -44,6 +44,9 @@ export const SubunitDashboard: React.FC = () => {
       breakdown: SizeBreakdown[],
       actualBoxCount: number
   } | null>(null);
+
+  // Size Header Toggle State
+  const [useNumericSizes, setUseNumericSizes] = useState(false);
 
   const [barcodeForm, setBarcodeForm] = useState({ qty: 0, size: 'M' });
 
@@ -218,6 +221,12 @@ export const SubunitDashboard: React.FC = () => {
               </span>
           </div>
       );
+  };
+
+  const getHeaderLabels = () => {
+    return useNumericSizes 
+        ? ['65', '70', '75', '80', '85', '90'] 
+        : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
   };
 
   // ... (Existing Helpers: Barcode, Material) ...
@@ -726,12 +735,24 @@ export const SubunitDashboard: React.FC = () => {
                 
                 <form onSubmit={handleCompleteOrder} className="p-6 space-y-6 overflow-y-auto max-h-[80vh]">
                     {/* Matrix Input */}
+                    <div className="flex justify-between items-center mb-2">
+                         <div/>
+                         <button 
+                            type="button"
+                            onClick={() => setUseNumericSizes(!useNumericSizes)}
+                            className="text-xs flex items-center gap-1 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 px-2 py-1 rounded border border-slate-200 transition-colors"
+                        >
+                            <ArrowLeftRight size={12}/> 
+                            {useNumericSizes ? 'Switch to Letters (S-3XL)' : 'Switch to Numbers (65-90)'}
+                        </button>
+                    </div>
+                    
                     <div className="border rounded-lg overflow-hidden shadow-sm">
                         <table className="w-full text-center text-sm">
                             <thead className="bg-slate-100 text-slate-600 font-semibold border-b">
                                 <tr>
                                     <th className="p-3 text-left">Color</th>
-                                    {['S','M','L','XL','XXL','XXXL'].map(sz => (
+                                    {getHeaderLabels().map(sz => (
                                         <th key={sz} className="p-3 min-w-[80px]">{sz}</th>
                                     ))}
                                 </tr>

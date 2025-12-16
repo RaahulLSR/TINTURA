@@ -1,8 +1,9 @@
+
 import React, { useEffect, useState } from 'react';
 import { fetchOrders, fetchUnits, createOrder, fetchBarcodes, uploadOrderAttachment, fetchOrderLogs, updateOrderDetails } from '../services/db';
 import { Order, Unit, OrderStatus, BarcodeStatus, SizeBreakdown, OrderLog } from '../types';
 import { StatusBadge } from '../components/Widgets';
-import { PlusCircle, RefreshCw, Package, Activity, Trash2, Plus, Eye, X, Upload, FileText, Download, BarChart3, PieChart, Calendar, Filter, ArrowUpRight, TrendingUp, Clock, List, MessageSquare, AlertTriangle, AlertOctagon, CheckCircle2, ChevronDown, ChevronUp, Pencil, Save, Archive, Search } from 'lucide-react';
+import { PlusCircle, RefreshCw, Package, Activity, Trash2, Plus, Eye, X, Upload, FileText, Download, BarChart3, PieChart, Calendar, Filter, ArrowUpRight, TrendingUp, Clock, List, MessageSquare, AlertTriangle, AlertOctagon, CheckCircle2, ChevronDown, ChevronUp, Pencil, Save, Archive, Search, ArrowLeftRight } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'reports'>('overview');
@@ -25,6 +26,9 @@ export const AdminDashboard: React.FC = () => {
   
   // Modal Timeline Data
   const [modalLogs, setModalLogs] = useState<OrderLog[]>([]);
+
+  // Size Header Toggle State
+  const [useNumericSizes, setUseNumericSizes] = useState(false);
 
   // Report Filters
   const [reportFilter, setReportFilter] = useState({
@@ -154,6 +158,12 @@ export const AdminDashboard: React.FC = () => {
 
   const getTotalQuantity = (bd: SizeBreakdown[] = breakdown) => {
     return bd.reduce((acc, row) => acc + getRowTotal(row), 0);
+  };
+
+  const getHeaderLabels = () => {
+    return useNumericSizes 
+        ? ['65', '70', '75', '80', '85', '90'] 
+        : ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
   };
 
   const handleAddRow = (setFunc = setBreakdown, current = breakdown) => {
@@ -710,22 +720,27 @@ export const AdminDashboard: React.FC = () => {
                     )}
 
                     <div>
-                        <h4 className="font-bold text-slate-700 mb-2 flex justify-between">
-                            <span>Order Breakdown</span>
-                            {detailsModal.status === OrderStatus.COMPLETED && !isEditing && <span className="text-xs font-normal text-indigo-600 bg-indigo-50 px-2 py-1 rounded">Displaying: Actual / Planned</span>}
-                        </h4>
+                        <div className="flex justify-between items-center mb-2">
+                             <h4 className="font-bold text-slate-700 flex justify-between">
+                                <span>Order Breakdown</span>
+                                {detailsModal.status === OrderStatus.COMPLETED && !isEditing && <span className="text-xs font-normal text-indigo-600 bg-indigo-50 px-2 py-1 rounded">Displaying: Actual / Planned</span>}
+                            </h4>
+                            <button 
+                                type="button"
+                                onClick={() => setUseNumericSizes(!useNumericSizes)}
+                                className="text-xs flex items-center gap-1 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 px-2 py-1 rounded border border-slate-200 transition-colors"
+                            >
+                                <ArrowLeftRight size={12}/> 
+                                {useNumericSizes ? 'Switch to Letters (S-3XL)' : 'Switch to Numbers (65-90)'}
+                            </button>
+                        </div>
                         
                         <div className="border rounded-lg overflow-hidden overflow-x-auto">
                             <table className="w-full text-center text-sm">
                                 <thead className="bg-slate-100 text-slate-600 font-semibold border-b">
                                     <tr>
                                         <th className="p-3 text-left">Color</th>
-                                        <th className="p-3">S</th>
-                                        <th className="p-3">M</th>
-                                        <th className="p-3">L</th>
-                                        <th className="p-3">XL</th>
-                                        <th className="p-3">XXL</th>
-                                        <th className="p-3">XXXL</th>
+                                        {getHeaderLabels().map(h => <th key={h} className="p-3">{h}</th>)}
                                         <th className="p-3 font-bold bg-slate-200">Total</th>
                                         {isEditing && <th className="p-3 w-10"></th>}
                                     </tr>
@@ -897,19 +912,24 @@ export const AdminDashboard: React.FC = () => {
                     <div>
                         <div className="flex justify-between items-center mb-2">
                             <label className="block text-sm font-bold text-slate-700">Size Breakdown Matrix</label>
-                            <span className="text-xs font-bold text-indigo-600">Total: {getTotalQuantity()} pcs</span>
+                            <div className="flex items-center gap-3">
+                                <button 
+                                    type="button"
+                                    onClick={() => setUseNumericSizes(!useNumericSizes)}
+                                    className="text-xs flex items-center gap-1 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 px-2 py-1 rounded border border-slate-200 transition-colors"
+                                >
+                                    <ArrowLeftRight size={12}/> 
+                                    {useNumericSizes ? 'Switch to Letters (S-3XL)' : 'Switch to Numbers (65-90)'}
+                                </button>
+                                <span className="text-xs font-bold text-indigo-600">Total: {getTotalQuantity()} pcs</span>
+                            </div>
                         </div>
                         <div className="border rounded-lg overflow-hidden bg-slate-50">
                             <table className="w-full text-center text-sm">
                                 <thead className="bg-slate-200 text-slate-600 font-semibold">
                                     <tr>
                                         <th className="p-3 text-left min-w-[250px]">Color</th>
-                                        <th className="p-3 w-32 text-base">S</th>
-                                        <th className="p-3 w-32 text-base">M</th>
-                                        <th className="p-3 w-32 text-base">L</th>
-                                        <th className="p-3 w-32 text-base">XL</th>
-                                        <th className="p-3 w-32 text-base">XXL</th>
-                                        <th className="p-3 w-32 text-base">3XL</th>
+                                        {getHeaderLabels().map(h => <th key={h} className="p-3 w-32 text-base">{h}</th>)}
                                         <th className="p-3 w-24 text-base font-bold bg-slate-300 text-slate-800">Total</th>
                                         <th className="p-3 w-16"></th>
                                     </tr>
