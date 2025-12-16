@@ -138,10 +138,28 @@ export const SalesDashboard: React.FC = () => {
         if (showCamera) {
             // @ts-ignore - html5-qrcode loaded via CDN
             const Html5Qrcode = window.Html5Qrcode; 
+            // @ts-ignore
+            const Html5QrcodeSupportedFormats = window.Html5QrcodeSupportedFormats;
+
             const html5QrCode = new Html5Qrcode("pos-reader");
             scannerRef.current = html5QrCode;
 
-            const config = { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 };
+            const config = { 
+                fps: 15, 
+                // Rectangular box for 1D barcodes
+                qrbox: { width: 280, height: 100 }, 
+                aspectRatio: 1.0,
+                // Prioritize CODE_128 for speed
+                formatsToSupport: [ 
+                    Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.EAN_13,
+                    Html5QrcodeSupportedFormats.UPC_A,
+                    Html5QrcodeSupportedFormats.CODE_39
+                ],
+                experimentalFeatures: {
+                    useBarCodeDetectorIfSupported: true
+                }
+            };
             
             html5QrCode.start(
                 { facingMode: "environment" }, 
