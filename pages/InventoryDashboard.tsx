@@ -1,7 +1,8 @@
+
 import React, { useEffect, useState, useRef } from 'react';
 import { fetchBarcodes, commitBarcodesToStock, fetchBarcodesBySerialList, fetchStockCommits, fetchBarcodesByCommit } from '../services/db';
 import { Barcode, BarcodeStatus, StockCommit } from '../types';
-import { Boxes, ScanLine, Save, Trash2, CheckCircle2, AlertTriangle, XOctagon, X, Search, History, Printer, List } from 'lucide-react';
+import { Boxes, ScanLine, Save, Trash2, CheckCircle2, AlertTriangle, XOctagon, X, Search, History, Printer, List, Camera, StopCircle } from 'lucide-react';
 
 interface StagedItem {
     serial: string;
@@ -34,6 +35,10 @@ export const InventoryDashboard: React.FC = () => {
     // Report Modal State
     const [reportData, setReportData] = useState<ReportData | null>(null);
 
+    // Camera State
+    const [showCamera, setShowCamera] = useState(false);
+    const scannerRef = useRef<any>(null);
+
     // Load actual inventory
     const loadInventory = () => fetchBarcodes(BarcodeStatus.COMMITTED_TO_STOCK).then(setInventory);
     const loadHistory = () => fetchStockCommits().then(setCommits);
@@ -45,63 +50,101 @@ export const InventoryDashboard: React.FC = () => {
 
     // Focus input on load and after actions
     useEffect(() => {
-        if (activeTab === 'scan') inputRef.current?.focus();
-    }, [stagedItems, reportData, activeTab]);
+        if (activeTab === 'scan' && !showCamera) inputRef.current?.focus();
+    }, [stagedItems, reportData, activeTab, showCamera]);
+
+    // --- SOUND LOGIC ---
+    const playSound = (type: 'success' | 'error') => {
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContext) return;
+        
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        if (type === 'success') {
+            // High pitch beep
+            osc.type = 'sine';
+            osc.frequency.value = 1200;
+            gain.gain.setValueAtTime(0.1, ctx.currentTime);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.1);
+        } else {
+            // Low pitch error sound
+            osc.type = 'sawtooth';
+            osc.frequency.value = 150;
+            gain.gain.setValueAtTime(0.1, ctx.currentTime);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.3);
+        }
+    };
+
+    // --- PROCESSING LOGIC ---
+    const processBarcode = async (serial: string) => {
+        // 1. Check duplicate in staging
+        // We use a functional update to get the latest state inside the callback
+        let isDuplicate = false;
+        setStagedItems(prev => {
+            if (prev.find(i => i.serial === serial)) {
+                isDuplicate = true;
+                return prev;
+            }
+            return prev;
+        });
+
+        if (isDuplicate) {
+            playSound('error'); // Duplicate scan
+            return; 
+        }
+
+        // 2. Lookup
+        const results = await fetchBarcodesBySerialList([serial]);
+        const match = results[0];
+
+        let newItem: StagedItem;
+
+        if (!match) {
+            newItem = {
+                serial,
+                style: 'Unknown',
+                size: '?',
+                status: 'ERROR',
+                message: 'Not found'
+            };
+            playSound('error');
+        } else {
+            if (match.status === BarcodeStatus.COMMITTED_TO_STOCK || match.status === BarcodeStatus.SOLD) {
+                newItem = {
+                    serial,
+                    style: match.style_number,
+                    size: match.size || 'N/A',
+                    status: 'EXISTS',
+                    message: 'Already in Stock'
+                };
+                playSound('error');
+            } else {
+                newItem = {
+                    serial,
+                    style: match.style_number,
+                    size: match.size || 'N/A',
+                    status: 'READY',
+                    message: 'Ready'
+                };
+                playSound('success');
+            }
+        }
+
+        setStagedItems(prev => [newItem, ...prev]);
+    };
 
     const handleScan = async (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
             const serial = scanInput.trim();
             if (!serial) return;
-
-            // 1. Check if already in staging buffer
-            if (stagedItems.find(i => i.serial === serial)) {
-                setStagedItems(prev => [{
-                    serial,
-                    style: '---',
-                    size: '---',
-                    status: 'DUPLICATE_SCAN',
-                    message: 'Already in list below'
-                }, ...prev]);
-                setScanInput("");
-                return;
-            }
-
-            // 2. Lookup in DB
-            const results = await fetchBarcodesBySerialList([serial]);
-            const match = results[0];
-
-            let newItem: StagedItem;
-
-            if (!match) {
-                newItem = {
-                    serial,
-                    style: 'Unknown',
-                    size: '?',
-                    status: 'ERROR',
-                    message: 'Barcode not found in system'
-                };
-            } else {
-                // Check status
-                if (match.status === BarcodeStatus.COMMITTED_TO_STOCK || match.status === BarcodeStatus.SOLD) {
-                    newItem = {
-                        serial,
-                        style: match.style_number,
-                        size: match.size || 'N/A',
-                        status: 'EXISTS',
-                        message: 'Already in inventory/Sold'
-                    };
-                } else {
-                    newItem = {
-                        serial,
-                        style: match.style_number,
-                        size: match.size || 'N/A',
-                        status: 'READY',
-                        message: 'Ready to add'
-                    };
-                }
-            }
-
-            setStagedItems(prev => [newItem, ...prev]);
+            await processBarcode(serial);
             setScanInput("");
         }
     };
@@ -131,9 +174,60 @@ export const InventoryDashboard: React.FC = () => {
         setStagedItems([]);
     };
 
-    // --- PRINTING UTILS ---
+    // --- CAMERA LOGIC ---
+    useEffect(() => {
+        if (showCamera) {
+            // @ts-ignore - html5-qrcode loaded via CDN
+            const Html5Qrcode = window.Html5Qrcode; 
+            const html5QrCode = new Html5Qrcode("reader");
+            scannerRef.current = html5QrCode;
 
+            const config = { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 };
+            
+            html5QrCode.start(
+                { facingMode: "environment" }, 
+                config, 
+                (decodedText: string) => {
+                   // Success callback
+                   // Debounce slightly or just process. 
+                   // Since processBarcode checks duplicates, we are somewhat safe, 
+                   // but we should avoid firing 10 times a second for the same code.
+                   processBarcode(decodedText);
+                   
+                   // Optional: Pause scanning briefly to prevent rapid-fire on the same barcode?
+                   // html5QrCode.pause();
+                   // setTimeout(() => html5QrCode.resume(), 1000);
+                },
+                (errorMessage: any) => {
+                    // parse error, ignore
+                }
+            ).catch((err: any) => {
+                console.error("Camera start failed", err);
+                setShowCamera(false);
+            });
+
+            return () => {
+                if (html5QrCode && html5QrCode.isScanning) {
+                    html5QrCode.stop().then(() => html5QrCode.clear());
+                }
+            };
+        }
+    }, [showCamera]);
+
+    const stopCamera = () => {
+        if (scannerRef.current) {
+            scannerRef.current.stop().then(() => {
+                scannerRef.current.clear();
+                setShowCamera(false);
+            }).catch((err: any) => console.log(err));
+        } else {
+            setShowCamera(false);
+        }
+    };
+
+    // --- PRINTING UTILS ---
     const printReceipt = (title: string, ref: string, date: string, items: {desc: string, qty: number}[]) => {
+        // ... (Keep existing print logic)
         const win = window.open('', 'Receipt', 'width=400,height=600');
         if (win) {
             win.document.write(`
@@ -268,9 +362,17 @@ export const InventoryDashboard: React.FC = () => {
                 <div className="lg:col-span-2 flex flex-col gap-4 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                     {/* Input Area */}
                     <div className="p-6 border-b bg-slate-50">
-                        <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
-                            <ScanLine size={18} className="text-indigo-600"/> Scan Barcode Input
-                        </label>
+                        <div className="flex justify-between items-center mb-2">
+                            <label className="block text-sm font-bold text-slate-700 flex items-center gap-2">
+                                <ScanLine size={18} className="text-indigo-600"/> Scan Barcode Input
+                            </label>
+                            <button 
+                                onClick={() => setShowCamera(true)}
+                                className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 hover:bg-indigo-700 shadow-sm"
+                            >
+                                <Camera size={14}/> Use Camera
+                            </button>
+                        </div>
                         <div className="relative">
                             <input 
                                 ref={inputRef}
@@ -496,6 +598,33 @@ export const InventoryDashboard: React.FC = () => {
                                 OK, Close Report
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* CAMERA MODAL */}
+            {showCamera && (
+                <div className="fixed inset-0 bg-black z-[60] flex flex-col items-center justify-center">
+                    <div className="absolute top-4 right-4 z-50">
+                        <button onClick={stopCamera} className="text-white bg-black/50 p-2 rounded-full">
+                            <X size={32}/>
+                        </button>
+                    </div>
+                    <div className="w-full max-w-md bg-black relative">
+                        <div id="reader" className="w-full h-full"></div>
+                        <div className="absolute bottom-10 left-0 right-0 flex justify-center pointer-events-none">
+                            <div className="bg-black/50 text-white px-4 py-2 rounded-full text-sm">
+                                Point camera at barcode
+                            </div>
+                        </div>
+                    </div>
+                    <div className="mt-4 flex gap-4">
+                        <button 
+                            onClick={stopCamera}
+                            className="bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-2"
+                        >
+                            <StopCircle size={20}/> Stop Scanning
+                        </button>
                     </div>
                 </div>
             )}

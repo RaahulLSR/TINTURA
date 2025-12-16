@@ -1,7 +1,8 @@
+
 import React, { useEffect, useState, useRef } from 'react';
 import { fetchBarcodes, createInvoice, fetchInvoices, fetchInvoiceItems } from '../services/db';
 import { Barcode, BarcodeStatus, Invoice } from '../types';
-import { ShoppingCart, FileText, ScanBarcode, Printer, X, CreditCard, History, LayoutGrid, Search } from 'lucide-react';
+import { ShoppingCart, FileText, ScanBarcode, Printer, X, CreditCard, History, LayoutGrid, Search, Camera, StopCircle } from 'lucide-react';
 
 export const SalesDashboard: React.FC = () => {
     // Tabs
@@ -23,6 +24,10 @@ export const SalesDashboard: React.FC = () => {
         invoiceNo: ''
     });
 
+    // Camera State
+    const [showCamera, setShowCamera] = useState(false);
+    const scannerRef = useRef<any>(null);
+
     const scanInputRef = useRef<HTMLInputElement>(null);
     
     useEffect(() => {
@@ -32,8 +37,8 @@ export const SalesDashboard: React.FC = () => {
 
     // Focus scanner input on load
     useEffect(() => {
-        if (activeTab === 'pos') scanInputRef.current?.focus();
-    }, [stock, activeTab]);
+        if (activeTab === 'pos' && !showCamera) scanInputRef.current?.focus();
+    }, [stock, activeTab, showCamera]);
 
     const loadStock = () => {
         fetchBarcodes(BarcodeStatus.COMMITTED_TO_STOCK).then(setStock);
@@ -41,6 +46,35 @@ export const SalesDashboard: React.FC = () => {
 
     const loadHistory = () => {
         fetchInvoices().then(setInvoices);
+    };
+
+    // --- SOUND LOGIC ---
+    const playSound = (type: 'success' | 'error') => {
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContext) return;
+        
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        if (type === 'success') {
+            // High pitch beep
+            osc.type = 'sine';
+            osc.frequency.value = 1200;
+            gain.gain.setValueAtTime(0.1, ctx.currentTime);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.1);
+        } else {
+            // Low pitch error sound
+            osc.type = 'sawtooth';
+            osc.frequency.value = 150;
+            gain.gain.setValueAtTime(0.1, ctx.currentTime);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.3);
+        }
     };
 
     const addToCart = (id: string) => {
@@ -51,25 +85,94 @@ export const SalesDashboard: React.FC = () => {
         setCart(prev => prev.filter(c => c !== id));
     };
 
+    // --- PROCESSING LOGIC ---
+    const processBarcode = (raw: string) => {
+        // Find item in stock
+        const item = stock.find(b => b.barcode_serial === raw);
+        
+        if (item) {
+            // Check if already in cart (need to check current state)
+            // Using functional update to access latest state
+            let alreadyInCart = false;
+            setCart(prev => {
+                if (prev.includes(item.id)) {
+                    alreadyInCart = true;
+                    return prev;
+                }
+                return [...prev, item.id];
+            });
+
+            if (alreadyInCart) {
+                playSound('error'); // Item already in cart
+            } else {
+                playSound('success'); // Added to cart
+            }
+        } else {
+            playSound('error'); // Not in stock
+        }
+    };
+
     const handleScan = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
             const raw = scanInput.trim();
             if (!raw) return;
-
-            // Find item in stock
-            const item = stock.find(b => b.barcode_serial === raw);
             
+            // Manual entry logic (reuse processBarcode logic but handle alerts differently if needed)
+            const item = stock.find(b => b.barcode_serial === raw);
             if (item) {
                 if (cart.includes(item.id)) {
                     alert("Item is already in the cart.");
                 } else {
                     addToCart(item.id);
-                    setScanInput(""); // Clear for rapid scanning
+                    setScanInput(""); 
                 }
             } else {
                 alert("Barcode not found in available stock, or already sold.");
                 setScanInput("");
             }
+        }
+    };
+
+    // --- CAMERA LOGIC ---
+    useEffect(() => {
+        if (showCamera) {
+            // @ts-ignore - html5-qrcode loaded via CDN
+            const Html5Qrcode = window.Html5Qrcode; 
+            const html5QrCode = new Html5Qrcode("pos-reader");
+            scannerRef.current = html5QrCode;
+
+            const config = { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 };
+            
+            html5QrCode.start(
+                { facingMode: "environment" }, 
+                config, 
+                (decodedText: string) => {
+                   processBarcode(decodedText);
+                },
+                (errorMessage: any) => {
+                    // parse error, ignore
+                }
+            ).catch((err: any) => {
+                console.error("Camera start failed", err);
+                setShowCamera(false);
+            });
+
+            return () => {
+                if (html5QrCode && html5QrCode.isScanning) {
+                    html5QrCode.stop().then(() => html5QrCode.clear());
+                }
+            };
+        }
+    }, [showCamera, stock]); // Re-bind if stock changes to ensure latest lookup
+
+    const stopCamera = () => {
+        if (scannerRef.current) {
+            scannerRef.current.stop().then(() => {
+                scannerRef.current.clear();
+                setShowCamera(false);
+            }).catch((err: any) => console.log(err));
+        } else {
+            setShowCamera(false);
         }
     };
 
@@ -267,6 +370,15 @@ export const SalesDashboard: React.FC = () => {
                     {/* RIGHT: Cart */}
                     <div className="w-full md:w-96 bg-white rounded-xl shadow-xl border border-slate-200 flex flex-col">
                         <div className="p-6 border-b bg-indigo-50">
+                            <div className="flex justify-between items-center mb-2">
+                                <span className="font-bold text-indigo-900 text-sm uppercase">Cart Scanner</span>
+                                <button 
+                                    onClick={() => setShowCamera(true)}
+                                    className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 hover:bg-indigo-700 shadow-sm"
+                                >
+                                    <Camera size={14}/> Use Camera
+                                </button>
+                            </div>
                             <div className="relative">
                                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                                     <ScanBarcode className="text-slate-400" size={18} />
@@ -442,6 +554,33 @@ export const SalesDashboard: React.FC = () => {
                                 <Printer size={20} /> Generate & Print Invoice
                             </button>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* CAMERA MODAL */}
+            {showCamera && (
+                <div className="fixed inset-0 bg-black z-[60] flex flex-col items-center justify-center">
+                    <div className="absolute top-4 right-4 z-50">
+                        <button onClick={stopCamera} className="text-white bg-black/50 p-2 rounded-full">
+                            <X size={32}/>
+                        </button>
+                    </div>
+                    <div className="w-full max-w-md bg-black relative">
+                        <div id="pos-reader" className="w-full h-full"></div>
+                        <div className="absolute bottom-10 left-0 right-0 flex justify-center pointer-events-none">
+                            <div className="bg-black/50 text-white px-4 py-2 rounded-full text-sm">
+                                Point camera at barcode
+                            </div>
+                        </div>
+                    </div>
+                    <div className="mt-4 flex gap-4">
+                        <button 
+                            onClick={stopCamera}
+                            className="bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-2"
+                        >
+                            <StopCircle size={20}/> Stop Scanning
+                        </button>
                     </div>
                 </div>
             )}
