@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { fetchBarcodes, commitBarcodesToStock, fetchBarcodesBySerialList, fetchStockCommits, fetchBarcodesByCommit } from '../services/db';
 import { Barcode, BarcodeStatus, StockCommit } from '../types';
-import { Boxes, ScanLine, Save, Trash2, CheckCircle2, AlertTriangle, XOctagon, X, Search, History, Printer, List, Camera, StopCircle } from 'lucide-react';
+import { Boxes, ScanLine, Save, Trash2, CheckCircle2, AlertTriangle, XOctagon, X, Search, History, Printer, List, Camera, StopCircle, SwitchCamera } from 'lucide-react';
 
 interface StagedItem {
     serial: string;
@@ -37,7 +37,12 @@ export const InventoryDashboard: React.FC = () => {
 
     // Camera State
     const [showCamera, setShowCamera] = useState(false);
-    const scannerRef = useRef<any>(null);
+    const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+    const [selectedCamera, setSelectedCamera] = useState<string>("");
+    
+    // Scanning Debounce Refs
+    const lastScannedCode = useRef<string | null>(null);
+    const lastScannedTime = useRef<number>(0);
 
     // Load actual inventory
     const loadInventory = () => fetchBarcodes(BarcodeStatus.COMMITTED_TO_STOCK).then(setInventory);
@@ -84,8 +89,16 @@ export const InventoryDashboard: React.FC = () => {
 
     // --- PROCESSING LOGIC ---
     const processBarcode = async (serial: string) => {
+        // Debounce Logic: Don't process the same code twice within 2 seconds
+        const now = Date.now();
+        if (lastScannedCode.current === serial && now - lastScannedTime.current < 2000) {
+            return; 
+        }
+        
+        lastScannedCode.current = serial;
+        lastScannedTime.current = now;
+
         // 1. Check duplicate in staging
-        // We use a functional update to get the latest state inside the callback
         let isDuplicate = false;
         setStagedItems(prev => {
             if (prev.find(i => i.serial === serial)) {
@@ -96,7 +109,7 @@ export const InventoryDashboard: React.FC = () => {
         });
 
         if (isDuplicate) {
-            playSound('error'); // Duplicate scan
+            playSound('error'); 
             return; 
         }
 
@@ -174,70 +187,105 @@ export const InventoryDashboard: React.FC = () => {
         setStagedItems([]);
     };
 
-    // --- CAMERA LOGIC ---
+    // --- QUAGGA CAMERA LOGIC ---
     useEffect(() => {
         if (showCamera) {
-            // @ts-ignore - html5-qrcode loaded via CDN
-            const Html5Qrcode = window.Html5Qrcode; 
-            // @ts-ignore
-            const Html5QrcodeSupportedFormats = window.Html5QrcodeSupportedFormats;
-
-            const html5QrCode = new Html5Qrcode("reader");
-            scannerRef.current = html5QrCode;
-
-            const config = { 
-                fps: 15, 
-                // Rectangular box for 1D barcodes
-                qrbox: { width: 280, height: 100 }, 
-                aspectRatio: 1.0,
-                // Prioritize CODE_128 for speed
-                formatsToSupport: [ 
-                    Html5QrcodeSupportedFormats.CODE_128,
-                    Html5QrcodeSupportedFormats.EAN_13,
-                    Html5QrcodeSupportedFormats.UPC_A,
-                    Html5QrcodeSupportedFormats.CODE_39
-                ],
-                experimentalFeatures: {
-                    useBarCodeDetectorIfSupported: true
+            // Enumerate cameras when modal opens
+            navigator.mediaDevices.enumerateDevices().then(devices => {
+                const videoDevices = devices.filter(d => d.kind === 'videoinput');
+                setCameras(videoDevices);
+                if (!selectedCamera && videoDevices.length > 0) {
+                    // Try to find back camera, else last camera (usually back on mobile)
+                    const back = videoDevices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
+                    setSelectedCamera(back ? back.deviceId : videoDevices[videoDevices.length - 1].deviceId);
                 }
-            };
-            
-            html5QrCode.start(
-                { facingMode: "environment" }, 
-                config, 
-                (decodedText: string) => {
-                   processBarcode(decodedText);
-                },
-                (errorMessage: any) => {
-                    // parse error, ignore
-                }
-            ).catch((err: any) => {
-                console.error("Camera start failed", err);
-                setShowCamera(false);
             });
-
-            return () => {
-                if (html5QrCode && html5QrCode.isScanning) {
-                    html5QrCode.stop().then(() => html5QrCode.clear());
-                }
-            };
         }
     }, [showCamera]);
 
-    const stopCamera = () => {
-        if (scannerRef.current) {
-            scannerRef.current.stop().then(() => {
-                scannerRef.current.clear();
-                setShowCamera(false);
-            }).catch((err: any) => console.log(err));
-        } else {
-            setShowCamera(false);
+    useEffect(() => {
+        if (showCamera && selectedCamera) {
+            const Quagga = (window as any).Quagga;
+            if (!Quagga) {
+                console.error("QuaggaJS not loaded");
+                return;
+            }
+
+            Quagga.init({
+                inputStream: {
+                    name: "Live",
+                    type: "LiveStream",
+                    target: document.querySelector('#scanner-container'),
+                    constraints: {
+                        width: 1280,
+                        height: 720,
+                        deviceId: { exact: selectedCamera } // Force specific camera
+                    },
+                },
+                locator: {
+                    patchSize: "medium",
+                    halfSample: true,
+                },
+                numOfWorkers: 2,
+                decoder: {
+                    readers: ["code_128_reader", "ean_reader", "upc_reader"] // Restrict to likely formats for speed
+                },
+                locate: true
+            }, function(err: any) {
+                if (err) {
+                    console.log(err);
+                    // Don't close modal on constraint error (like camera in use), user might switch cam
+                    return;
+                }
+                Quagga.start();
+            });
+
+            // Visual Feedback (Drawing Boxes)
+            Quagga.onProcessed(function(result: any) {
+                const drawingCtx = Quagga.canvas.ctx.overlay;
+                const drawingCanvas = Quagga.canvas.dom.overlay;
+
+                if (result) {
+                    if (result.boxes) {
+                        drawingCtx.clearRect(0, 0, parseInt(drawingCanvas.getAttribute("width")), parseInt(drawingCanvas.getAttribute("height")));
+                        result.boxes.filter(function (box: any) {
+                            return box !== result.box;
+                        }).forEach(function (box: any) {
+                            Quagga.ImageDebug.drawPath(box, { x: 0, y: 1 }, drawingCtx, { color: "green", lineWidth: 2 });
+                        });
+                    }
+                    if (result.box) {
+                        Quagga.ImageDebug.drawPath(result.box, { x: 0, y: 1 }, drawingCtx, { color: "#00F", lineWidth: 2 });
+                    }
+                }
+            });
+
+            // Detection Logic
+            Quagga.onDetected(function(result: any) {
+                const code = result.codeResult.code;
+                if (code) {
+                    processBarcode(code);
+                }
+            });
+
+            return () => {
+                Quagga.stop();
+                Quagga.offDetected();
+                Quagga.offProcessed();
+            };
         }
+    }, [showCamera, selectedCamera]); // Restart if selectedCamera changes
+
+    const stopCamera = () => {
+        const Quagga = (window as any).Quagga;
+        if (Quagga) {
+            Quagga.stop();
+        }
+        setShowCamera(false);
     };
 
-    // --- PRINTING UTILS ---
+    // --- PRINTING UTILS (Keep Existing) ---
     const printReceipt = (title: string, ref: string, date: string, items: {desc: string, qty: number}[]) => {
-        // ... (Keep existing print logic)
         const win = window.open('', 'Receipt', 'width=400,height=600');
         if (win) {
             win.document.write(`
@@ -615,23 +663,48 @@ export const InventoryDashboard: React.FC = () => {
             {/* CAMERA MODAL */}
             {showCamera && (
                 <div className="fixed inset-0 bg-black z-[60] flex flex-col items-center justify-center">
-                    <div className="absolute top-4 right-4 z-50">
-                        <button onClick={stopCamera} className="text-white bg-black/50 p-2 rounded-full">
+                    <div className="absolute top-4 right-4 z-50 flex gap-4">
+                        <button onClick={stopCamera} className="text-white bg-black/50 p-2 rounded-full hover:bg-black/70">
                             <X size={32}/>
                         </button>
                     </div>
-                    <div className="w-full max-w-md bg-black relative">
-                        <div id="reader" className="w-full h-full"></div>
-                        <div className="absolute bottom-10 left-0 right-0 flex justify-center pointer-events-none">
-                            <div className="bg-black/50 text-white px-4 py-2 rounded-full text-sm">
-                                Point camera at barcode
+
+                    {/* Camera Selector */}
+                    {cameras.length > 1 && (
+                         <div className="absolute top-4 left-4 z-50 bg-black/50 rounded-lg p-2 backdrop-blur-sm">
+                            <label className="flex items-center gap-2 text-white text-xs font-bold mb-1">
+                                <SwitchCamera size={14} /> Switch Camera
+                            </label>
+                            <select 
+                                className="bg-black/80 text-white text-sm border border-slate-600 rounded p-1 outline-none w-48"
+                                value={selectedCamera}
+                                onChange={(e) => setSelectedCamera(e.target.value)}
+                            >
+                                {cameras.map(cam => (
+                                    <option key={cam.deviceId} value={cam.deviceId}>
+                                        {cam.label || `Camera ${cam.deviceId.slice(0,5)}...`}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
+                    <div className="w-full max-w-2xl bg-black relative rounded-lg overflow-hidden border border-slate-700">
+                        <div id="scanner-container" className="w-full h-80 relative bg-black">
+                             {/* Quagga injects video here */}
+                             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[80%] h-[2px] bg-red-500 shadow-[0_0_10px_rgba(255,0,0,0.8)] z-20 pointer-events-none"></div>
+                             <div className="absolute inset-0 border-2 border-white/20 pointer-events-none z-20"></div>
+                        </div>
+                        <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none z-30">
+                            <div className="bg-black/60 text-white px-4 py-2 rounded-full text-sm backdrop-blur-sm">
+                                Align red line with barcode
                             </div>
                         </div>
                     </div>
-                    <div className="mt-4 flex gap-4">
+                    <div className="mt-6 flex gap-4">
                         <button 
                             onClick={stopCamera}
-                            className="bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-2"
+                            className="bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-2 hover:bg-red-700 transition"
                         >
                             <StopCircle size={20}/> Stop Scanning
                         </button>

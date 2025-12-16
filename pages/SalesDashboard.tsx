@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { fetchBarcodes, createInvoice, fetchInvoices, fetchInvoiceItems } from '../services/db';
 import { Barcode, BarcodeStatus, Invoice } from '../types';
-import { ShoppingCart, FileText, ScanBarcode, Printer, X, CreditCard, History, LayoutGrid, Search, Camera, StopCircle } from 'lucide-react';
+import { ShoppingCart, FileText, ScanBarcode, Printer, X, CreditCard, History, LayoutGrid, Search, Camera, StopCircle, SwitchCamera } from 'lucide-react';
 
 export const SalesDashboard: React.FC = () => {
     // Tabs
@@ -26,7 +26,12 @@ export const SalesDashboard: React.FC = () => {
 
     // Camera State
     const [showCamera, setShowCamera] = useState(false);
-    const scannerRef = useRef<any>(null);
+    const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+    const [selectedCamera, setSelectedCamera] = useState<string>("");
+    
+    // Debounce Ref
+    const lastScannedCode = useRef<string | null>(null);
+    const lastScannedTime = useRef<number>(0);
 
     const scanInputRef = useRef<HTMLInputElement>(null);
     
@@ -87,12 +92,20 @@ export const SalesDashboard: React.FC = () => {
 
     // --- PROCESSING LOGIC ---
     const processBarcode = (raw: string) => {
+        // Debounce Logic
+        const now = Date.now();
+        if (lastScannedCode.current === raw && now - lastScannedTime.current < 2000) {
+            return; 
+        }
+        
+        lastScannedCode.current = raw;
+        lastScannedTime.current = now;
+
         // Find item in stock
         const item = stock.find(b => b.barcode_serial === raw);
         
         if (item) {
             // Check if already in cart (need to check current state)
-            // Using functional update to access latest state
             let alreadyInCart = false;
             setCart(prev => {
                 if (prev.includes(item.id)) {
@@ -103,9 +116,9 @@ export const SalesDashboard: React.FC = () => {
             });
 
             if (alreadyInCart) {
-                playSound('error'); // Item already in cart
+                playSound('error'); 
             } else {
-                playSound('success'); // Added to cart
+                playSound('success'); 
             }
         } else {
             playSound('error'); // Not in stock
@@ -117,7 +130,7 @@ export const SalesDashboard: React.FC = () => {
             const raw = scanInput.trim();
             if (!raw) return;
             
-            // Manual entry logic (reuse processBarcode logic but handle alerts differently if needed)
+            // Reuse process logic (without debounce strictly required here, but simpler to implement inline)
             const item = stock.find(b => b.barcode_serial === raw);
             if (item) {
                 if (cart.includes(item.id)) {
@@ -133,65 +146,100 @@ export const SalesDashboard: React.FC = () => {
         }
     };
 
-    // --- CAMERA LOGIC ---
+    // --- QUAGGA CAMERA LOGIC ---
     useEffect(() => {
         if (showCamera) {
-            // @ts-ignore - html5-qrcode loaded via CDN
-            const Html5Qrcode = window.Html5Qrcode; 
-            // @ts-ignore
-            const Html5QrcodeSupportedFormats = window.Html5QrcodeSupportedFormats;
-
-            const html5QrCode = new Html5Qrcode("pos-reader");
-            scannerRef.current = html5QrCode;
-
-            const config = { 
-                fps: 15, 
-                // Rectangular box for 1D barcodes
-                qrbox: { width: 280, height: 100 }, 
-                aspectRatio: 1.0,
-                // Prioritize CODE_128 for speed
-                formatsToSupport: [ 
-                    Html5QrcodeSupportedFormats.CODE_128,
-                    Html5QrcodeSupportedFormats.EAN_13,
-                    Html5QrcodeSupportedFormats.UPC_A,
-                    Html5QrcodeSupportedFormats.CODE_39
-                ],
-                experimentalFeatures: {
-                    useBarCodeDetectorIfSupported: true
+             // Enumerate cameras when modal opens
+             navigator.mediaDevices.enumerateDevices().then(devices => {
+                const videoDevices = devices.filter(d => d.kind === 'videoinput');
+                setCameras(videoDevices);
+                if (!selectedCamera && videoDevices.length > 0) {
+                    // Try to find back camera, else last camera (usually back on mobile)
+                    const back = videoDevices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
+                    setSelectedCamera(back ? back.deviceId : videoDevices[videoDevices.length - 1].deviceId);
                 }
-            };
-            
-            html5QrCode.start(
-                { facingMode: "environment" }, 
-                config, 
-                (decodedText: string) => {
-                   processBarcode(decodedText);
+            });
+        }
+    }, [showCamera]);
+
+    useEffect(() => {
+        if (showCamera && selectedCamera) {
+            const Quagga = (window as any).Quagga;
+            if (!Quagga) {
+                console.error("QuaggaJS not loaded");
+                return;
+            }
+
+            Quagga.init({
+                inputStream: {
+                    name: "Live",
+                    type: "LiveStream",
+                    target: document.querySelector('#pos-scanner-container'),
+                    constraints: {
+                        width: 1280,
+                        height: 720,
+                        deviceId: { exact: selectedCamera } // Force specific camera
+                    },
                 },
-                (errorMessage: any) => {
-                    // parse error, ignore
+                locator: {
+                    patchSize: "medium",
+                    halfSample: true,
+                },
+                numOfWorkers: 2,
+                decoder: {
+                    readers: ["code_128_reader", "ean_reader", "upc_reader"]
+                },
+                locate: true
+            }, function(err: any) {
+                if (err) {
+                    console.log(err);
+                    return;
                 }
-            ).catch((err: any) => {
-                console.error("Camera start failed", err);
-                setShowCamera(false);
+                Quagga.start();
+            });
+
+            // Visual Feedback
+            Quagga.onProcessed(function(result: any) {
+                const drawingCtx = Quagga.canvas.ctx.overlay;
+                const drawingCanvas = Quagga.canvas.dom.overlay;
+
+                if (result) {
+                    if (result.boxes) {
+                        drawingCtx.clearRect(0, 0, parseInt(drawingCanvas.getAttribute("width")), parseInt(drawingCanvas.getAttribute("height")));
+                        result.boxes.filter(function (box: any) {
+                            return box !== result.box;
+                        }).forEach(function (box: any) {
+                            Quagga.ImageDebug.drawPath(box, { x: 0, y: 1 }, drawingCtx, { color: "green", lineWidth: 2 });
+                        });
+                    }
+                    if (result.box) {
+                        Quagga.ImageDebug.drawPath(result.box, { x: 0, y: 1 }, drawingCtx, { color: "#00F", lineWidth: 2 });
+                    }
+                }
+            });
+
+            // Detection
+            Quagga.onDetected(function(result: any) {
+                const code = result.codeResult.code;
+                if (code) {
+                    processBarcode(code);
+                }
             });
 
             return () => {
-                if (html5QrCode && html5QrCode.isScanning) {
-                    html5QrCode.stop().then(() => html5QrCode.clear());
-                }
+                Quagga.stop();
+                Quagga.offDetected();
+                Quagga.offProcessed();
             };
         }
-    }, [showCamera, stock]); // Re-bind if stock changes to ensure latest lookup
+    }, [showCamera, stock, selectedCamera]); // Restart if selectedCamera changes
 
     const stopCamera = () => {
-        if (scannerRef.current) {
-            scannerRef.current.stop().then(() => {
-                scannerRef.current.clear();
-                setShowCamera(false);
-            }).catch((err: any) => console.log(err));
-        } else {
-            setShowCamera(false);
+        const Quagga = (window as any).Quagga;
+        if (Quagga) {
+            Quagga.stop();
         }
+        setShowCamera(false);
     };
 
     const openCheckoutModal = () => {
@@ -579,23 +627,48 @@ export const SalesDashboard: React.FC = () => {
             {/* CAMERA MODAL */}
             {showCamera && (
                 <div className="fixed inset-0 bg-black z-[60] flex flex-col items-center justify-center">
-                    <div className="absolute top-4 right-4 z-50">
-                        <button onClick={stopCamera} className="text-white bg-black/50 p-2 rounded-full">
+                    <div className="absolute top-4 right-4 z-50 flex gap-4">
+                        <button onClick={stopCamera} className="text-white bg-black/50 p-2 rounded-full hover:bg-black/70">
                             <X size={32}/>
                         </button>
                     </div>
-                    <div className="w-full max-w-md bg-black relative">
-                        <div id="pos-reader" className="w-full h-full"></div>
-                        <div className="absolute bottom-10 left-0 right-0 flex justify-center pointer-events-none">
-                            <div className="bg-black/50 text-white px-4 py-2 rounded-full text-sm">
-                                Point camera at barcode
+
+                    {/* Camera Selector */}
+                    {cameras.length > 1 && (
+                         <div className="absolute top-4 left-4 z-50 bg-black/50 rounded-lg p-2 backdrop-blur-sm">
+                            <label className="flex items-center gap-2 text-white text-xs font-bold mb-1">
+                                <SwitchCamera size={14} /> Switch Camera
+                            </label>
+                            <select 
+                                className="bg-black/80 text-white text-sm border border-slate-600 rounded p-1 outline-none w-48"
+                                value={selectedCamera}
+                                onChange={(e) => setSelectedCamera(e.target.value)}
+                            >
+                                {cameras.map(cam => (
+                                    <option key={cam.deviceId} value={cam.deviceId}>
+                                        {cam.label || `Camera ${cam.deviceId.slice(0,5)}...`}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
+                    <div className="w-full max-w-2xl bg-black relative rounded-lg overflow-hidden border border-slate-700">
+                        <div id="pos-scanner-container" className="w-full h-80 relative bg-black">
+                             {/* Quagga injects video here */}
+                             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[80%] h-[2px] bg-red-500 shadow-[0_0_10px_rgba(255,0,0,0.8)] z-20 pointer-events-none"></div>
+                             <div className="absolute inset-0 border-2 border-white/20 pointer-events-none z-20"></div>
+                        </div>
+                        <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none z-30">
+                            <div className="bg-black/60 text-white px-4 py-2 rounded-full text-sm backdrop-blur-sm">
+                                Align red line with barcode
                             </div>
                         </div>
                     </div>
-                    <div className="mt-4 flex gap-4">
+                    <div className="mt-6 flex gap-4">
                         <button 
                             onClick={stopCamera}
-                            className="bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-2"
+                            className="bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-2 hover:bg-red-700 transition"
                         >
                             <StopCircle size={20}/> Stop Scanning
                         </button>
