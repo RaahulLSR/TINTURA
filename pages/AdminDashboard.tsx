@@ -1,19 +1,25 @@
 import React, { useEffect, useState } from 'react';
-import { fetchOrders, fetchUnits, createOrder, fetchBarcodes, uploadOrderAttachment } from '../services/db';
-import { Order, Unit, OrderStatus, BarcodeStatus, SizeBreakdown } from '../types';
+import { fetchOrders, fetchUnits, createOrder, fetchBarcodes, uploadOrderAttachment, fetchOrderLogs } from '../services/db';
+import { Order, Unit, OrderStatus, BarcodeStatus, SizeBreakdown, OrderLog } from '../types';
 import { StatusBadge } from '../components/Widgets';
-import { PlusCircle, RefreshCw, Package, Activity, Trash2, Plus, Eye, X, Upload, FileText, Download, BarChart3, PieChart, Calendar, Filter, ArrowUpRight, TrendingUp } from 'lucide-react';
+import { PlusCircle, RefreshCw, Package, Activity, Trash2, Plus, Eye, X, Upload, FileText, Download, BarChart3, PieChart, Calendar, Filter, ArrowUpRight, TrendingUp, Clock, Radio, List, MessageSquare, AlertTriangle, AlertOctagon, CheckCircle2 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'reports'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'live'>('overview');
   const [orders, setOrders] = useState<Order[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [liveStockCount, setLiveStockCount] = useState(0);
   const [activeOrderCount, setActiveOrderCount] = useState(0);
   
+  // Live Feed State
+  const [allLogs, setAllLogs] = useState<OrderLog[]>([]);
+
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [detailsModal, setDetailsModal] = useState<Order | null>(null);
+  
+  // Modal Timeline Data
+  const [modalLogs, setModalLogs] = useState<OrderLog[]>([]);
 
   // Report Filters
   const [reportFilter, setReportFilter] = useState({
@@ -56,9 +62,24 @@ export const AdminDashboard: React.FC = () => {
     setActiveOrderCount(fetchedOrders.filter(o => o.status !== OrderStatus.COMPLETED).length);
   };
 
+  const loadLiveFeed = async () => {
+      const logs = await fetchOrderLogs();
+      setAllLogs(logs);
+  };
+
   useEffect(() => {
     loadData();
-  }, []);
+    if (activeTab === 'live') loadLiveFeed();
+  }, [activeTab]);
+
+  // When details modal opens, fetch specific logs
+  useEffect(() => {
+      if (detailsModal) {
+          fetchOrderLogs(detailsModal.id).then(setModalLogs);
+      } else {
+          setModalLogs([]);
+      }
+  }, [detailsModal]);
 
   // --- REPORT ALGORITHMS ---
   const getFilteredOrders = () => {
@@ -72,6 +93,14 @@ export const AdminDashboard: React.FC = () => {
 
           return inDate && inUnit;
       });
+  };
+
+  const getDelayedOrders = () => {
+      const today = new Date().toISOString().split('T')[0];
+      return orders.filter(o => 
+          o.status !== OrderStatus.COMPLETED && 
+          o.target_delivery_date < today
+      );
   };
 
   const generateReportStats = () => {
@@ -100,6 +129,29 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const stats = generateReportStats();
+  const delayedOrders = getDelayedOrders();
+
+  // --- LIVE FEED GROUPING ---
+  const getGroupedLogs = () => {
+      const grouped: Record<string, OrderLog[]> = {};
+      allLogs.forEach(log => {
+          if (!grouped[log.order_id]) grouped[log.order_id] = [];
+          grouped[log.order_id].push(log);
+      });
+      
+      // Convert to array and sort by most recent log date
+      return Object.keys(grouped).map(orderId => {
+          const orderLogs = grouped[orderId].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+          const order = orders.find(o => o.id === orderId);
+          return {
+              order,
+              logs: orderLogs,
+              lastUpdate: orderLogs[0].created_at
+          };
+      }).sort((a, b) => new Date(b.lastUpdate).getTime() - new Date(a.lastUpdate).getTime());
+  };
+
+  const groupedFeed = getGroupedLogs();
 
   // --- HELPERS ---
 
@@ -191,7 +243,7 @@ export const AdminDashboard: React.FC = () => {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
         <h2 className="text-3xl font-bold text-slate-800">
-            {activeTab === 'overview' ? 'Executive Dashboard' : 'Analytics & Reports'}
+            {activeTab === 'overview' ? 'Executive Dashboard' : activeTab === 'reports' ? 'Analytics & Reports' : 'Live Operations Feed'}
         </h2>
         
         <div className="flex items-center gap-2">
@@ -207,6 +259,16 @@ export const AdminDashboard: React.FC = () => {
                     <BarChart3 size={16}/> Overview
                 </button>
                 <button 
+                    onClick={() => setActiveTab('live')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                        activeTab === 'live' 
+                        ? 'bg-indigo-600 text-white shadow-sm' 
+                        : 'text-slate-500 hover:bg-slate-50'
+                    }`}
+                >
+                    <Radio size={16} className={activeTab === 'live' ? "text-red-500 animate-pulse" : ""}/> Live Feed
+                </button>
+                <button 
                     onClick={() => setActiveTab('reports')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                         activeTab === 'reports' 
@@ -214,7 +276,7 @@ export const AdminDashboard: React.FC = () => {
                         : 'text-slate-500 hover:bg-slate-50'
                     }`}
                 >
-                    <PieChart size={16}/> Performance Reports
+                    <PieChart size={16}/> Reports
                 </button>
             </div>
             
@@ -303,6 +365,90 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* ================= LIVE FEED TAB ================= */}
+      {activeTab === 'live' && (
+          <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+              <div className="flex items-center justify-between mb-2">
+                  <div>
+                      <h3 className="text-lg font-bold text-slate-700">Real-time Activity Stream</h3>
+                      <p className="text-sm text-slate-500">Grouped by Order &bull; Sorted by Recent Activity</p>
+                  </div>
+                  <button onClick={loadLiveFeed} className="flex items-center gap-1 text-sm bg-white border px-3 py-1.5 rounded shadow-sm hover:bg-slate-50 text-indigo-600 font-medium">
+                      <RefreshCw size={14}/> Refresh
+                  </button>
+              </div>
+
+              <div className="space-y-8">
+                  {groupedFeed.length === 0 ? (
+                      <div className="text-center p-12 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400">
+                          <Activity size={48} className="mx-auto mb-2 opacity-20"/>
+                          <p>No activity recorded yet.</p>
+                      </div>
+                  ) : (
+                      groupedFeed.map((group) => (
+                          <div key={group.order?.id || Math.random()} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden relative">
+                              {/* Card Header */}
+                              <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                  <div className="flex items-center gap-4">
+                                      <div className="bg-indigo-100 text-indigo-700 p-2.5 rounded-lg font-bold">
+                                          {group.order?.order_no || 'UNK'}
+                                      </div>
+                                      <div>
+                                          <h4 className="font-bold text-slate-800 text-lg">{group.order?.style_number}</h4>
+                                          <div className="flex items-center gap-2 text-xs text-slate-500">
+                                              <span>{units.find(u => u.id === group.order?.unit_id)?.name}</span>
+                                              <span>&bull;</span>
+                                              <span>{group.order?.quantity} Units</span>
+                                          </div>
+                                      </div>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                      {group.order && <StatusBadge status={group.order.status} />}
+                                      <span className="text-xs text-slate-400 font-mono">Last Update: {new Date(group.lastUpdate).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                  </div>
+                              </div>
+
+                              {/* Timeline Content */}
+                              <div className="p-6 relative">
+                                  {/* Vertical Line */}
+                                  <div className="absolute left-8 top-6 bottom-6 w-0.5 bg-slate-200"></div>
+
+                                  <div className="space-y-6">
+                                      {group.logs.map((log) => (
+                                          <div key={log.id} className="relative flex items-start group">
+                                              {/* Dot */}
+                                              <div className={`absolute left-2 w-4 h-4 rounded-full border-2 border-white shadow-sm z-10 ${
+                                                  log.log_type === 'STATUS_CHANGE' ? 'bg-blue-500' : 
+                                                  log.log_type === 'CREATION' ? 'bg-green-500' : 'bg-orange-500'
+                                              }`}></div>
+                                              
+                                              <div className="ml-10 w-full">
+                                                  <div className="flex justify-between items-start">
+                                                      <div>
+                                                          <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                                                              log.log_type === 'STATUS_CHANGE' ? 'bg-blue-50 text-blue-600' : 
+                                                              log.log_type === 'CREATION' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'
+                                                          }`}>
+                                                              {log.log_type.replace('_',' ')}
+                                                          </span>
+                                                          <p className="mt-1 text-sm text-slate-700 font-medium">{log.message}</p>
+                                                      </div>
+                                                      <span className="text-xs text-slate-400 whitespace-nowrap ml-2">
+                                                          {new Date(log.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}
+                                                      </span>
+                                                  </div>
+                                              </div>
+                                          </div>
+                                      ))}
+                                  </div>
+                              </div>
+                          </div>
+                      ))
+                  )}
+              </div>
+          </div>
+      )}
+
       {/* ================= REPORTS TAB ================= */}
       {activeTab === 'reports' && (
         <div className="space-y-6 animate-fade-in">
@@ -343,49 +489,93 @@ export const AdminDashboard: React.FC = () => {
 
             {/* KPI Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Total Orders</p>
-                    <p className="text-2xl font-extrabold text-indigo-600 mt-1">{stats.totalOrders}</p>
+                <div className="bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden group">
+                    <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity text-indigo-600"><List size={64}/></div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Total Orders</p>
+                    <p className="text-3xl font-extrabold text-indigo-600 mt-2">{stats.totalOrders}</p>
                 </div>
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Pieces Production</p>
-                    <p className="text-2xl font-extrabold text-blue-600 mt-1">{stats.totalPieces.toLocaleString()}</p>
+                <div className="bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden group">
+                    <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity text-blue-600"><Package size={64}/></div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Pieces Production</p>
+                    <p className="text-3xl font-extrabold text-blue-600 mt-2">{stats.totalPieces.toLocaleString()}</p>
                 </div>
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Completed Orders</p>
-                    <p className="text-2xl font-extrabold text-green-600 mt-1">{stats.completedOrders}</p>
+                <div className="bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden group">
+                    <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity text-green-600"><CheckCircle2 size={64}/></div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Completed Orders</p>
+                    <p className="text-3xl font-extrabold text-green-600 mt-2">{stats.completedOrders}</p>
                 </div>
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Completion Rate</p>
-                    <div className="flex items-center gap-2 mt-1">
-                        <p className="text-2xl font-extrabold text-slate-800">{stats.completionRate}%</p>
+                <div className="bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden group">
+                    <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity text-orange-600"><Activity size={64}/></div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Completion Rate</p>
+                    <div className="flex items-baseline gap-2 mt-2">
+                        <p className="text-3xl font-extrabold text-slate-800">{stats.completionRate}%</p>
                         <TrendingUp size={20} className={parseFloat(stats.completionRate) > 50 ? 'text-green-500' : 'text-orange-500'} />
                     </div>
                 </div>
             </div>
 
+            {/* Critical Alerts: Delayed Orders */}
+            {delayedOrders.length > 0 && (
+                <div className="bg-red-50 border border-red-100 rounded-xl p-6 shadow-sm">
+                    <h3 className="font-bold text-red-800 flex items-center gap-2 mb-4">
+                        <AlertOctagon size={20}/> Critical Alerts: Delayed Orders
+                    </h3>
+                    <div className="bg-white rounded-lg border border-red-100 overflow-hidden">
+                        <table className="w-full text-left text-sm">
+                            <thead className="bg-red-50/50 text-red-700">
+                                <tr>
+                                    <th className="p-3">Order No</th>
+                                    <th className="p-3">Style</th>
+                                    <th className="p-3">Target Date</th>
+                                    <th className="p-3">Current Status</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-red-50">
+                                {delayedOrders.map(o => (
+                                    <tr key={o.id}>
+                                        <td className="p-3 font-bold text-red-900">{o.order_no}</td>
+                                        <td className="p-3 text-slate-600">{o.style_number}</td>
+                                        <td className="p-3 font-mono font-bold text-red-600">{o.target_delivery_date}</td>
+                                        <td className="p-3"><StatusBadge status={o.status}/></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Unit Performance Chart */}
                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><BarChart3 className="text-indigo-600"/> Unit Production Volume</h3>
-                    <div className="space-y-4">
+                    <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><BarChart3 className="text-indigo-600"/> Production Velocity by Unit</h3>
+                    <div className="space-y-6">
                         {stats.unitPerf.map((u, idx) => {
                             const maxVal = Math.max(...stats.unitPerf.map(i => i.totalQty), 1); // Avoid div by zero
                             const percentage = (u.totalQty / maxVal) * 100;
                             return (
                                 <div key={idx}>
-                                    <div className="flex justify-between text-sm mb-1">
-                                        <span className="font-medium text-slate-700">{u.name}</span>
-                                        <span className="font-mono font-bold text-slate-600">{u.totalQty} pcs</span>
+                                    <div className="flex justify-between text-sm mb-2">
+                                        <span className="font-bold text-slate-700">{u.name}</span>
+                                        <div className="text-right">
+                                            <span className="font-bold text-slate-800">{u.totalQty}</span>
+                                            <span className="text-xs text-slate-400 ml-1">pcs</span>
+                                        </div>
                                     </div>
-                                    <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                                    <div className="w-full bg-slate-100 rounded-full h-4 overflow-hidden relative">
                                         <div 
-                                            className="bg-indigo-500 h-full rounded-full transition-all duration-500" 
+                                            className="bg-indigo-500 h-full rounded-full transition-all duration-1000 ease-out" 
                                             style={{ width: `${percentage}%` }}
                                         ></div>
+                                        {/* Completed Portion Overlay */}
+                                        <div 
+                                            className="absolute top-0 left-0 bg-green-400 h-full rounded-full opacity-60 transition-all duration-1000 ease-out" 
+                                            style={{ width: `${(u.completedQty / maxVal) * 100}%` }}
+                                        ></div>
                                     </div>
-                                    <div className="text-xs text-slate-400 mt-1 text-right">
-                                        {u.completedQty} Completed
+                                    <div className="flex justify-between mt-1 text-[10px] text-slate-400 font-medium">
+                                        <span>Capacity Usage</span>
+                                        <span>{u.completedQty} Completed <span className="w-2 h-2 bg-green-400 inline-block rounded-full ml-1"></span></span>
                                     </div>
                                 </div>
                             )
@@ -396,14 +586,15 @@ export const AdminDashboard: React.FC = () => {
 
                 {/* Status Distribution */}
                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Activity className="text-indigo-600"/> Order Status Breakdown</h3>
+                    <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Activity className="text-indigo-600"/> Workflow Distribution</h3>
                     <div className="space-y-3">
                         {Object.entries(stats.statusDist).map(([status, count], idx) => (
-                            <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+                            <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100 hover:border-indigo-100 transition-colors">
                                 <div className="flex items-center gap-3">
+                                    <div className="w-2 h-8 rounded-full bg-slate-300"></div>
                                     <StatusBadge status={status} />
                                 </div>
-                                <span className="font-bold text-slate-800 bg-white px-3 py-1 rounded shadow-sm border border-slate-200">{count}</span>
+                                <span className="font-bold text-lg text-slate-700">{count}</span>
                             </div>
                         ))}
                          {Object.keys(stats.statusDist).length === 0 && <p className="text-center text-slate-400 italic">No data found.</p>}
@@ -416,7 +607,7 @@ export const AdminDashboard: React.FC = () => {
       {/* Details Modal */}
       {detailsModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden max-h-[90vh] flex flex-col">
                 <div className="p-6 border-b flex justify-between items-center bg-slate-50">
                     <div>
                         <h3 className="text-xl font-bold text-slate-800">{detailsModal.order_no}</h3>
@@ -424,7 +615,9 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                     <button onClick={() => setDetailsModal(null)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
                 </div>
-                <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    {/* Basic Info */}
                     <div className="grid grid-cols-2 gap-4 text-sm">
                         <div className="p-3 bg-slate-50 rounded">
                             <span className="block text-slate-500 text-xs uppercase font-bold">Total Qty</span>
@@ -436,20 +629,47 @@ export const AdminDashboard: React.FC = () => {
                         </div>
                     </div>
                     
+                    {/* TIMELINE SECTION INSIDE MODAL */}
+                    <div className="bg-indigo-50/50 rounded-xl border border-indigo-100 p-4">
+                        <h4 className="font-bold text-indigo-900 mb-4 flex items-center gap-2 text-sm uppercase"><Clock size={16}/> Production Timeline</h4>
+                        <div className="space-y-4 max-h-40 overflow-y-auto pr-2">
+                             {modalLogs.length === 0 ? (
+                                 <p className="text-sm text-indigo-400 italic">No timeline events recorded.</p>
+                             ) : (
+                                 modalLogs.map(log => (
+                                     <div key={log.id} className="flex gap-3 text-sm">
+                                         <div className="min-w-[130px] text-xs font-mono text-slate-500 pt-0.5">
+                                             {new Date(log.created_at).toLocaleString([], { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'})}
+                                         </div>
+                                         <div className="flex-1">
+                                             <span className={`font-bold text-xs px-1.5 py-0.5 rounded mr-2 ${
+                                                 log.log_type === 'STATUS_CHANGE' ? 'bg-blue-100 text-blue-700' :
+                                                 log.log_type === 'CREATION' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
+                                             }`}>
+                                                 {log.log_type === 'MANUAL_UPDATE' ? 'NOTE' : 'STATUS'}
+                                             </span>
+                                             <span className="text-slate-700">{log.message}</span>
+                                         </div>
+                                     </div>
+                                 ))
+                             )}
+                        </div>
+                    </div>
+
                     {detailsModal.attachment_url && (
-                        <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center justify-between">
+                        <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
                             <div className="flex items-center gap-3">
-                                <div className="p-2 bg-white rounded-full text-indigo-600"><FileText size={20}/></div>
+                                <div className="p-2 bg-white rounded-full text-slate-600"><FileText size={20}/></div>
                                 <div>
-                                    <p className="text-sm font-bold text-indigo-900">Order Attachment</p>
-                                    <p className="text-xs text-indigo-600 truncate max-w-[200px]">{detailsModal.attachment_name || "Document"}</p>
+                                    <p className="text-sm font-bold text-slate-900">Order Attachment</p>
+                                    <p className="text-xs text-slate-600 truncate max-w-[200px]">{detailsModal.attachment_name || "Document"}</p>
                                 </div>
                             </div>
                             <a 
                                 href={detailsModal.attachment_url} 
                                 target="_blank" 
                                 rel="noreferrer"
-                                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-indigo-700"
+                                className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-slate-700"
                             >
                                 <Download size={16}/> Download
                             </a>
@@ -471,12 +691,12 @@ export const AdminDashboard: React.FC = () => {
                                     <thead className="bg-slate-100 text-slate-600 font-semibold border-b">
                                         <tr>
                                             <th className="p-3 text-left">Color</th>
-                                            <th className="p-3">S / 65</th>
-                                            <th className="p-3">M / 70</th>
-                                            <th className="p-3">L / 75</th>
-                                            <th className="p-3">XL / 80</th>
-                                            <th className="p-3">XXL / 85</th>
-                                            <th className="p-3">XXXL / 90</th>
+                                            <th className="p-3">S</th>
+                                            <th className="p-3">M</th>
+                                            <th className="p-3">L</th>
+                                            <th className="p-3">XL</th>
+                                            <th className="p-3">XXL</th>
+                                            <th className="p-3">XXXL</th>
                                             <th className="p-3 font-bold bg-slate-200">Total</th>
                                         </tr>
                                     </thead>

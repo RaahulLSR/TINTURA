@@ -1,10 +1,17 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { fetchBarcodes, createInvoice } from '../services/db';
+import { fetchBarcodes, createInvoice, fetchInvoices, fetchInvoiceItems } from '../services/db';
 import { Barcode, BarcodeStatus, Invoice } from '../types';
-import { ShoppingCart, FileText, ScanBarcode, Printer, X, CreditCard } from 'lucide-react';
+import { ShoppingCart, FileText, ScanBarcode, Printer, X, CreditCard, History, LayoutGrid } from 'lucide-react';
 
 export const SalesDashboard: React.FC = () => {
+    // Tabs
+    const [activeTab, setActiveTab] = useState<'pos' | 'history'>('pos');
+    
+    // Data
     const [stock, setStock] = useState<Barcode[]>([]);
+    const [invoices, setInvoices] = useState<Invoice[]>([]);
+    
+    // Cart
     const [cart, setCart] = useState<string[]>([]); // Barcode IDs
     const [scanInput, setScanInput] = useState("");
     
@@ -19,15 +26,20 @@ export const SalesDashboard: React.FC = () => {
     
     useEffect(() => {
         loadStock();
-    }, []);
+        if (activeTab === 'history') loadHistory();
+    }, [activeTab]);
 
     // Focus scanner input on load
     useEffect(() => {
-        scanInputRef.current?.focus();
-    }, [stock]);
+        if (activeTab === 'pos') scanInputRef.current?.focus();
+    }, [stock, activeTab]);
 
     const loadStock = () => {
         fetchBarcodes(BarcodeStatus.COMMITTED_TO_STOCK).then(setStock);
+    };
+
+    const loadHistory = () => {
+        fetchInvoices().then(setInvoices);
     };
 
     const addToCart = (id: string) => {
@@ -172,115 +184,191 @@ export const SalesDashboard: React.FC = () => {
         loadStock(); // Refresh available stock
     };
 
+    const handleReprint = async (inv: Invoice) => {
+        const items = await fetchInvoiceItems(inv.id);
+        printInvoice(inv, items);
+    };
+
     const cartTotal = cart.length * 25.00;
 
     return (
-        <div className="flex flex-col md:flex-row h-[calc(100vh-100px)] gap-6">
+        <div className="flex flex-col h-[calc(100vh-100px)] gap-6">
             
-            {/* LEFT: Available Stock List */}
-            <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
-                <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
-                    <span className="font-bold text-lg text-slate-700">Available Stock ({stock.length})</span>
-                    <span className="text-xs text-slate-500">Click to add manually</span>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 content-start">
-                    {stock.map(b => {
-                        const inCart = cart.includes(b.id);
-                        return (
-                            <button 
-                                key={b.id} 
-                                onClick={() => !inCart && addToCart(b.id)}
-                                disabled={inCart}
-                                className={`p-3 rounded-lg border text-left transition relative overflow-hidden ${
-                                    inCart 
-                                    ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed' 
-                                    : 'bg-white border-slate-200 hover:border-indigo-500 hover:shadow-md'
-                                }`}
-                            >
-                                <div className="font-mono font-bold text-slate-800 text-sm truncate" title={b.barcode_serial}>
-                                    {b.barcode_serial.split(';').pop()} {/* Show only the unique serial part for brevity */}
-                                </div>
-                                <div className="text-xs text-slate-500 mt-1">{b.style_number} • Size {b.size}</div>
-                                {inCart && <div className="absolute top-1 right-1 text-green-500"><ScanBarcode size={16}/></div>}
-                            </button>
-                        )
-                    })}
-                </div>
-            </div>
-
-            {/* RIGHT: POS / Cart */}
-            <div className="w-full md:w-96 bg-white rounded-xl shadow-xl border border-slate-200 flex flex-col">
-                <div className="p-6 border-b bg-indigo-50">
-                    <h2 className="text-xl font-bold text-indigo-900 flex items-center gap-2 mb-4">
-                        <ShoppingCart className="text-indigo-600"/> Point of Sale
-                    </h2>
-                    
-                    {/* Barcode Scanner Input */}
-                    <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <ScanBarcode className="text-slate-400" size={18} />
-                        </div>
-                        <input
-                            ref={scanInputRef}
-                            type="text"
-                            value={scanInput}
-                            onChange={(e) => setScanInput(e.target.value)}
-                            onKeyDown={handleScan}
-                            placeholder="Scan Barcode here..."
-                            className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none shadow-sm font-mono text-sm bg-white text-black"
-                            autoComplete="off"
-                        />
-                    </div>
-                </div>
-                
-                {/* Cart Items */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-slate-50/50">
-                    {cart.length === 0 && (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                            <ShoppingCart size={48} className="mb-2 opacity-20"/>
-                            <p>Cart is empty</p>
-                            <p className="text-xs">Scan items to begin</p>
-                        </div>
-                    )}
-                    {cart.map(id => {
-                        const item = stock.find(s => s.id === id);
-                        return (
-                            <div key={id} className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded shadow-sm">
-                                <div>
-                                    <div className="font-bold text-slate-800 text-sm">{item?.style_number} - {item?.size}</div>
-                                    <div className="text-xs text-slate-500 font-mono truncate w-40">{item?.barcode_serial}</div>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <span className="font-bold text-slate-700">$25</span>
-                                    <button onClick={() => removeFromCart(id)} className="text-red-400 hover:text-red-600 p-1 hover:bg-red-50 rounded">
-                                        <X size={16} />
-                                    </button>
-                                </div>
-                            </div>
-                        )
-                    })}
-                </div>
-
-                {/* Footer Totals */}
-                <div className="p-6 bg-white border-t border-slate-200 space-y-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-                    <div className="flex justify-between text-slate-600 text-sm">
-                        <span>Items</span>
-                        <span>{cart.length}</span>
-                    </div>
-                    <div className="flex justify-between font-bold text-2xl text-slate-800">
-                        <span>Total</span>
-                        <span>${cartTotal.toFixed(2)}</span>
-                    </div>
-                    
+            {/* Top Bar / Navigation */}
+            <div className="flex justify-between items-center">
+                 <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                    <ShoppingCart className="text-indigo-600"/> Sales & POS
+                </h2>
+                <div className="bg-white p-1 rounded-lg border border-slate-200 shadow-sm flex">
                     <button 
-                        onClick={openCheckoutModal}
-                        disabled={cart.length === 0}
-                        className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-200 transition-all active:scale-95 flex items-center justify-center gap-2"
+                        onClick={() => setActiveTab('pos')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                            activeTab === 'pos' 
+                            ? 'bg-indigo-600 text-white shadow-sm' 
+                            : 'text-slate-500 hover:bg-slate-50'
+                        }`}
                     >
-                        <CreditCard size={20} /> Checkout
+                        <LayoutGrid size={16}/> POS Terminal
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('history')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                            activeTab === 'history' 
+                            ? 'bg-indigo-600 text-white shadow-sm' 
+                            : 'text-slate-500 hover:bg-slate-50'
+                        }`}
+                    >
+                        <History size={16}/> Previous Bills
                     </button>
                 </div>
             </div>
+
+            {/* TAB: POS TERMINAL */}
+            {activeTab === 'pos' && (
+                <div className="flex-1 flex flex-col md:flex-row gap-6 animate-fade-in overflow-hidden">
+                    {/* LEFT: Available Stock List */}
+                    <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
+                        <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+                            <span className="font-bold text-lg text-slate-700">Available Stock ({stock.length})</span>
+                            <span className="text-xs text-slate-500">Click to add manually</span>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 content-start">
+                            {stock.map(b => {
+                                const inCart = cart.includes(b.id);
+                                return (
+                                    <button 
+                                        key={b.id} 
+                                        onClick={() => !inCart && addToCart(b.id)}
+                                        disabled={inCart}
+                                        className={`p-3 rounded-lg border text-left transition relative overflow-hidden ${
+                                            inCart 
+                                            ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed' 
+                                            : 'bg-white border-slate-200 hover:border-indigo-500 hover:shadow-md'
+                                        }`}
+                                    >
+                                        <div className="font-mono font-bold text-slate-800 text-sm truncate" title={b.barcode_serial}>
+                                            {b.barcode_serial.split(';').pop()}
+                                        </div>
+                                        <div className="text-xs text-slate-500 mt-1">{b.style_number} • Size {b.size}</div>
+                                        {inCart && <div className="absolute top-1 right-1 text-green-500"><ScanBarcode size={16}/></div>}
+                                    </button>
+                                )
+                            })}
+                        </div>
+                    </div>
+
+                    {/* RIGHT: Cart */}
+                    <div className="w-full md:w-96 bg-white rounded-xl shadow-xl border border-slate-200 flex flex-col">
+                        <div className="p-6 border-b bg-indigo-50">
+                            <div className="relative">
+                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                    <ScanBarcode className="text-slate-400" size={18} />
+                                </div>
+                                <input
+                                    ref={scanInputRef}
+                                    type="text"
+                                    value={scanInput}
+                                    onChange={(e) => setScanInput(e.target.value)}
+                                    onKeyDown={handleScan}
+                                    placeholder="Scan Barcode here..."
+                                    className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none shadow-sm font-mono text-sm bg-white text-black"
+                                    autoComplete="off"
+                                />
+                            </div>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-slate-50/50">
+                            {cart.length === 0 && (
+                                <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                                    <ShoppingCart size={48} className="mb-2 opacity-20"/>
+                                    <p>Cart is empty</p>
+                                    <p className="text-xs">Scan items to begin</p>
+                                </div>
+                            )}
+                            {cart.map(id => {
+                                const item = stock.find(s => s.id === id);
+                                return (
+                                    <div key={id} className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded shadow-sm">
+                                        <div>
+                                            <div className="font-bold text-slate-800 text-sm">{item?.style_number} - {item?.size}</div>
+                                            <div className="text-xs text-slate-500 font-mono truncate w-40">{item?.barcode_serial}</div>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <span className="font-bold text-slate-700">$25</span>
+                                            <button onClick={() => removeFromCart(id)} className="text-red-400 hover:text-red-600 p-1 hover:bg-red-50 rounded">
+                                                <X size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+
+                        <div className="p-6 bg-white border-t border-slate-200 space-y-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+                            <div className="flex justify-between text-slate-600 text-sm">
+                                <span>Items</span>
+                                <span>{cart.length}</span>
+                            </div>
+                            <div className="flex justify-between font-bold text-2xl text-slate-800">
+                                <span>Total</span>
+                                <span>${cartTotal.toFixed(2)}</span>
+                            </div>
+                            
+                            <button 
+                                onClick={openCheckoutModal}
+                                disabled={cart.length === 0}
+                                className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-200 transition-all active:scale-95 flex items-center justify-center gap-2"
+                            >
+                                <CreditCard size={20} /> Checkout
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* TAB: HISTORY */}
+            {activeTab === 'history' && (
+                <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in flex flex-col">
+                    <div className="p-4 border-b bg-slate-50 font-bold text-slate-700 flex items-center gap-2">
+                        <History size={18}/> Sales History
+                    </div>
+                    <div className="flex-1 overflow-auto">
+                        {invoices.length === 0 ? (
+                            <div className="p-12 text-center text-slate-400">No sales history found.</div>
+                        ) : (
+                            <table className="w-full text-left">
+                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase sticky top-0">
+                                    <tr>
+                                        <th className="p-4">Date</th>
+                                        <th className="p-4">Invoice #</th>
+                                        <th className="p-4">Customer</th>
+                                        <th className="p-4 text-right">Amount</th>
+                                        <th className="p-4 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {invoices.map(inv => (
+                                        <tr key={inv.id} className="hover:bg-slate-50">
+                                            <td className="p-4 text-slate-700">{new Date(inv.created_at).toLocaleString()}</td>
+                                            <td className="p-4 font-mono text-sm text-slate-500">{inv.invoice_no}</td>
+                                            <td className="p-4 font-bold text-slate-800">{inv.customer_name}</td>
+                                            <td className="p-4 text-right font-bold text-green-600">${inv.total_amount.toFixed(2)}</td>
+                                            <td className="p-4 text-right">
+                                                <button 
+                                                    onClick={() => handleReprint(inv)}
+                                                    className="inline-flex items-center gap-2 px-3 py-1.5 border border-slate-200 rounded text-sm text-slate-600 hover:bg-white hover:text-indigo-600 shadow-sm"
+                                                >
+                                                    <Printer size={14}/> Reprint Receipt
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Checkout Modal */}
             {isCheckoutOpen && (

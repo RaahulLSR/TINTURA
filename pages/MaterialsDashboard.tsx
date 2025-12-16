@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { fetchMaterialRequests, approveMaterialRequest, fetchOrders, fetchUnits } from '../services/db';
+import { fetchMaterialRequests, approveMaterialRequest, fetchOrders, fetchUnits, fetchMaterialApprovals } from '../services/db';
 import { MaterialRequest, MaterialStatus, Order, Unit } from '../types';
 import { Printer, Paperclip, ChevronDown, ChevronUp, Box, ExternalLink, Calendar, AlertCircle } from 'lucide-react';
 import { useAuth } from '../components/Layout';
@@ -52,7 +52,24 @@ export const MaterialsDashboard: React.FC = () => {
 
   // --- Printing & Approval Logic ---
 
-  const printReceipt = (req: MaterialRequest, qtyApprovedNow: number, orderNo: string) => {
+  const printReceipt = async (req: MaterialRequest, orderNo: string) => {
+    // 1. Fetch detailed history
+    const approvals = await fetchMaterialApprovals(req.id);
+    
+    // 2. Generate Rows
+    let runningTotal = 0;
+    const rowsHtml = approvals.map(app => {
+        runningTotal += app.qty_approved;
+        return `
+            <tr>
+                <td style="text-align:left">${new Date(app.created_at).toLocaleString()}</td>
+                <td style="text-align:right">${app.qty_approved}</td>
+            </tr>
+        `;
+    }).join('');
+
+    const remaining = req.quantity_requested - runningTotal;
+
     const win = window.open('', 'Receipt', 'width=400,height=600');
     if (win) {
         win.document.write(`
@@ -63,27 +80,47 @@ export const MaterialsDashboard: React.FC = () => {
                     body { font-family: 'Courier New', monospace; padding: 20px; text-align: center; }
                     .header { font-weight: bold; font-size: 1.2rem; margin-bottom: 10px; border-bottom: 2px dashed #000; padding-bottom: 10px; }
                     .meta { font-size: 0.8rem; margin-bottom: 20px; text-align: left; }
-                    .content { font-size: 1.1rem; margin: 20px 0; font-weight: bold; }
+                    table { width: 100%; font-size: 0.9rem; margin: 15px 0; border-collapse: collapse; }
+                    th { border-bottom: 1px solid #000; padding-bottom: 5px; }
+                    td { padding: 4px 0; }
+                    .summary { font-weight: bold; margin-top: 10px; border-top: 1px solid #000; padding-top: 10px; text-align:right; }
                     .footer { margin-top: 40px; border-top: 1px solid #000; padding-top: 5px; text-align: left; font-size: 0.9rem; }
                 </style>
             </head>
             <body>
                 <div class="header">
                     TINTURA SST<br/>
-                    MATERIAL APPROVAL
+                    MATERIAL LOG
                 </div>
                 <div class="meta">
-                    Date: ${new Date().toLocaleString()}<br/>
+                    Print Date: ${new Date().toLocaleString()}<br/>
                     Order Ref: ${orderNo}<br/>
-                    Item: ${req.material_content}
+                    Item: ${req.material_content}<br/>
+                    Req ID: ${req.id}
                 </div>
-                <div class="content">
-                    QTY APPROVED: ${qtyApprovedNow}
+                
+                <div style="text-align:left; font-weight:bold; margin-bottom:5px;">APPROVAL HISTORY:</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="text-align:left">Date/Time</th>
+                            <th style="text-align:right">Qty</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml}
+                    </tbody>
+                </table>
+
+                <div class="summary">
+                    <div>TOTAL REQUESTED: ${req.quantity_requested}</div>
+                    <div>TOTAL APPROVED: ${runningTotal}</div>
+                    <div style="margin-top:5px; font-size:1.1em;">REMAINING: ${remaining}</div>
                 </div>
+
                 <div class="footer">
-                    Approved By:<br/>
-                    <br/>
-                    ${user}
+                    Status: ${req.status}<br/>
+                    Issued By System
                 </div>
                 <script>
                     window.print();
@@ -99,22 +136,24 @@ export const MaterialsDashboard: React.FC = () => {
   const handleApprove = async () => {
     if (!approvalModal) return;
     
-    // Calculate total approved including previous approvals
+    // Calculate new status
     const newTotalApproved = approvalModal.quantity_approved + approveQty;
-    
     let status = MaterialStatus.APPROVED;
     if (newTotalApproved < approvalModal.quantity_requested) status = MaterialStatus.PARTIALLY_APPROVED;
     if (newTotalApproved === 0 && approvalModal.quantity_approved === 0) status = MaterialStatus.REJECTED;
 
-    await approveMaterialRequest(approvalModal.id, newTotalApproved, status);
+    // Use specific approve function that logs the transaction
+    await approveMaterialRequest(approvalModal.id, approveQty, approvalModal.quantity_approved, status);
     
     // Find order number for receipt
     const order = orders.find(o => o.id === approvalModal.order_id);
     const orderNo = order ? order.order_no : 'UNK';
 
-    // Generate Receipt for the *current batch* approved
+    // Automatically print receipt if approval qty > 0
     if (approveQty > 0) {
-        printReceipt(approvalModal, approveQty, orderNo);
+        // Fetch fresh data for printing to ensure ID logic holds
+        const updatedReq = { ...approvalModal, quantity_approved: newTotalApproved, status };
+        printReceipt(updatedReq, orderNo);
     }
     
     setApprovalModal(null);
@@ -243,7 +282,14 @@ export const MaterialsDashboard: React.FC = () => {
                                                             {req.status.replace(/_/g, ' ')}
                                                         </span>
                                                     </td>
-                                                    <td className="p-4 pr-6 text-right">
+                                                    <td className="p-4 pr-6 text-right flex justify-end gap-2">
+                                                        <button 
+                                                            onClick={() => printReceipt(req, order ? order.order_no : 'UNK')}
+                                                            className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded"
+                                                            title="Print Log"
+                                                        >
+                                                            <Printer size={16}/>
+                                                        </button>
                                                         {canApprove && (
                                                             <button 
                                                                 onClick={() => openApprovalModal(req)}

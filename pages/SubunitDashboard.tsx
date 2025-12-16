@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { fetchOrders, updateOrderStatus, generateBarcodes, createMaterialRequest, fetchMaterialRequests, uploadOrderAttachment } from '../services/db';
-import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest } from '../types';
+import { fetchOrders, updateOrderStatus, generateBarcodes, createMaterialRequest, fetchMaterialRequests, uploadOrderAttachment, addOrderLog, fetchOrderLogs } from '../services/db';
+import { Order, OrderStatus, getNextOrderStatus, SizeBreakdown, MaterialRequest, OrderLog } from '../types';
 import { StatusBadge, BulkActionToolbar } from '../components/Widgets';
-import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, X, Eye, CheckCircle2, History, ListTodo, Archive, FileText, Download, Plus, Trash2, Paperclip, Calculator } from 'lucide-react';
+import { ArrowRight, Printer, PackagePlus, Box, AlertTriangle, X, Eye, CheckCircle2, History, ListTodo, Archive, FileText, Download, Plus, Trash2, Paperclip, Calculator, Clock, MessageSquare, Send } from 'lucide-react';
 
 // Hardcoded ID for this specific Subunit Dashboard instance
 const CURRENT_UNIT_ID = 2; // Sewing Unit A
@@ -25,6 +25,11 @@ export const SubunitDashboard: React.FC = () => {
   const [barcodeModal, setBarcodeModal] = useState<{orderId: string, style: string} | null>(null);
   const [detailsModal, setDetailsModal] = useState<Order | null>(null);
   
+  // Timeline Modal State
+  const [timelineModal, setTimelineModal] = useState<{orderId: string, orderNo: string} | null>(null);
+  const [timelineLogs, setTimelineLogs] = useState<OrderLog[]>([]);
+  const [statusUpdateText, setStatusUpdateText] = useState("");
+
   // Material History State
   const [showMaterialHistory, setShowMaterialHistory] = useState(false);
   const [materialHistory, setMaterialHistory] = useState<MaterialRequest[]>([]);
@@ -100,6 +105,25 @@ export const SubunitDashboard: React.FC = () => {
     }
   };
 
+  // --- Timeline Logic ---
+  const openTimeline = async (orderId: string, orderNo: string) => {
+      const logs = await fetchOrderLogs(orderId);
+      setTimelineLogs(logs);
+      setTimelineModal({ orderId, orderNo });
+      setStatusUpdateText("");
+  };
+
+  const submitManualStatusUpdate = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!timelineModal || !statusUpdateText.trim()) return;
+
+      await addOrderLog(timelineModal.orderId, 'MANUAL_UPDATE', statusUpdateText);
+      // Refresh logs
+      const logs = await fetchOrderLogs(timelineModal.orderId);
+      setTimelineLogs(logs);
+      setStatusUpdateText("");
+  };
+
   // --- Completion Logic ---
   const openCompletionModal = (order: Order) => {
       const initialBreakdown = order.size_breakdown 
@@ -143,8 +167,6 @@ export const SubunitDashboard: React.FC = () => {
   // --- Material History Logic ---
   const handleOpenMaterialHistory = async () => {
       const allRequests = await fetchMaterialRequests();
-      // Filter requests belonging to orders of this unit
-      // Since orders state contains all orders for this unit (active and history)
       const unitOrderIds = orders.map(o => o.id);
       const unitRequests = allRequests.filter(req => unitOrderIds.includes(req.order_id));
       setMaterialHistory(unitRequests);
@@ -156,7 +178,6 @@ export const SubunitDashboard: React.FC = () => {
     return (row.s || 0) + (row.m || 0) + (row.l || 0) + (row.xl || 0) + (row.xxl || 0) + (row.xxxl || 0);
   };
 
-  // Helper to render Detail Modal cells (X/Y logic)
   const renderDetailCell = (order: Order, rowIdx: number, sizeKey: keyof SizeBreakdown) => {
       const plannedRow = order.size_breakdown?.[rowIdx];
       const actualRow = order.completion_breakdown?.[rowIdx];
@@ -271,10 +292,7 @@ export const SubunitDashboard: React.FC = () => {
   const handleMaterialModalOpen = (orderId: string) => {
       const order = orders.find(o => o.id === orderId);
       setMaterialModal(orderId);
-      // Pre-fill total pcs if available from order quantity
       if (order) setTotalPcs(order.quantity);
-      
-      // Reset state
       setReqTab('pcs');
       setMaterialRows([{ id: 1, name: '', qtyPerPc: 0, file: null }]);
       setReqContent({ material: '', qty: 0 });
@@ -298,14 +316,12 @@ export const SubunitDashboard: React.FC = () => {
       setIsSubmittingReq(true);
 
       if (reqTab === 'direct') {
-          // Simple Direct Request
           await createMaterialRequest({
               order_id: materialModal,
               material_content: reqContent.material,
               quantity_requested: reqContent.qty
           });
       } else {
-          // Complex Per/Pcs Request - Iterate rows
           for (const row of materialRows) {
               if (!row.name || row.qtyPerPc <= 0) continue;
 
@@ -313,7 +329,7 @@ export const SubunitDashboard: React.FC = () => {
               let attachmentUrl = undefined;
 
               if (row.file) {
-                  const url = await uploadOrderAttachment(row.file); // Reusing bucket
+                  const url = await uploadOrderAttachment(row.file);
                   if (url) attachmentUrl = url;
               }
 
@@ -344,7 +360,6 @@ export const SubunitDashboard: React.FC = () => {
         </div>
         
         <div className="flex gap-4">
-            {/* Material History Button */}
             <button 
                 onClick={handleOpenMaterialHistory}
                 className="bg-white border border-slate-200 text-slate-600 px-4 py-2 rounded-lg flex items-center gap-2 font-medium hover:bg-slate-50 shadow-sm"
@@ -353,7 +368,6 @@ export const SubunitDashboard: React.FC = () => {
                 <span className="hidden sm:inline">Material Requests</span>
             </button>
 
-            {/* TAB SWITCHER */}
             <div className="bg-white p-1 rounded-lg border border-slate-200 shadow-sm flex">
                 <button 
                     onClick={() => setActiveTab('active')}
@@ -401,9 +415,7 @@ export const SubunitDashboard: React.FC = () => {
             <tbody className="divide-y divide-slate-100">
                 {displayedOrders.map(order => {
                 const nextStatus = getNextOrderStatus(order.status);
-                // Can advance if not in QC (unless approved) and not completed
                 const canAdvance = order.status !== OrderStatus.QC && order.status !== OrderStatus.COMPLETED;
-                
                 const isReadyToComplete = order.status === OrderStatus.QC_APPROVED;
                 const isCompleted = order.status === OrderStatus.COMPLETED;
 
@@ -435,7 +447,7 @@ export const SubunitDashboard: React.FC = () => {
                             </div>
                         )}
                     </td>
-                    <td className="p-4 text-right flex justify-end gap-2 items-center">
+                    <td className="p-4 text-right flex justify-end gap-2 items-center flex-wrap">
                         <button 
                             onClick={() => setDetailsModal(order)}
                             className="text-xs bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded inline-flex items-center gap-1 border border-slate-200 shadow-sm"
@@ -447,6 +459,13 @@ export const SubunitDashboard: React.FC = () => {
                         
                         {!isCompleted && (
                             <>
+                                <button 
+                                    onClick={() => openTimeline(order.id, order.order_no)}
+                                    className="text-xs bg-teal-50 hover:bg-teal-100 text-teal-600 px-3 py-1.5 rounded inline-flex items-center gap-1 border border-teal-100"
+                                >
+                                    <Clock size={14}/> 
+                                    <span className="hidden xl:inline">Timeline</span>
+                                </button>
                                 <button 
                                     onClick={() => openBarcodeModal(order.id, order.style_number)}
                                     className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded inline-flex items-center gap-1 border border-slate-200"
@@ -506,7 +525,7 @@ export const SubunitDashboard: React.FC = () => {
         />
       )}
 
-      {/* Details Modal (Updated for X/Y) */}
+      {/* Details Modal (Existing) */}
       {detailsModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden">
@@ -518,7 +537,7 @@ export const SubunitDashboard: React.FC = () => {
                     <button onClick={() => setDetailsModal(null)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
                 </div>
                 <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-                    {/* ... (Basic Info) ... */}
+                    {/* Basic Info */}
                     <div className="grid grid-cols-2 gap-4 text-sm">
                         <div className="p-3 bg-slate-50 rounded">
                             <span className="block text-slate-500 text-xs uppercase font-bold">Total Qty</span>
@@ -550,7 +569,7 @@ export const SubunitDashboard: React.FC = () => {
                         </div>
                     )}
                     
-                    {/* Matrix with Totals */}
+                    {/* Matrix */}
                     <div>
                         <h4 className="font-bold text-slate-700 mb-2 flex justify-between">
                             <span>Order Breakdown</span>
@@ -600,7 +619,6 @@ export const SubunitDashboard: React.FC = () => {
                                                     <td className="p-3">{renderDetailCell(detailsModal, idx, 'xxl')}</td>
                                                     <td className="p-3">{renderDetailCell(detailsModal, idx, 'xxxl')}</td>
                                                     <td className="p-3 font-bold bg-slate-50 text-slate-800">{rowTotalDisplay}</td>
-                                                    {/* Explicit text-slate-800 */}
                                                 </tr>
                                             );
                                         })}
@@ -666,7 +684,6 @@ export const SubunitDashboard: React.FC = () => {
                             </thead>
                             <tbody className="divide-y">
                                 {completionForm.breakdown.map((row, idx) => {
-                                    // Find target row to display X / Y
                                     const targetRow = completionModal.size_breakdown?.[idx];
                                     return (
                                         <tr key={idx} className="hover:bg-slate-50">
@@ -679,7 +696,6 @@ export const SubunitDashboard: React.FC = () => {
                                                             <input 
                                                                 type="number" min="0"
                                                                 className="w-16 border-b-2 border-indigo-300 text-center font-bold text-indigo-900 focus:outline-none focus:border-indigo-600 bg-white" 
-                                                                // Forced bg-white as requested
                                                                 value={(row as any)[sz]}
                                                                 onChange={e => updateCompletionRow(idx, sz as keyof SizeBreakdown, parseInt(e.target.value)||0)}
                                                             />
@@ -984,6 +1000,69 @@ export const SubunitDashboard: React.FC = () => {
                   </div>
                   <div className="p-4 bg-slate-50 text-right border-t">
                       <button onClick={() => setShowMaterialHistory(false)} className="bg-slate-800 text-white px-4 py-2 rounded">Close</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* TIMELINE MODAL */}
+      {timelineModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-scale-up flex flex-col max-h-[90vh]">
+                  <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+                      <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                          <Clock size={18}/> Order Timeline: {timelineModal.orderNo}
+                      </h3>
+                      <button onClick={() => setTimelineModal(null)} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
+                  </div>
+                  
+                  {/* Log View */}
+                  <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+                      {timelineLogs.length === 0 ? (
+                          <div className="text-center text-slate-400 text-sm">No activity logs found.</div>
+                      ) : (
+                          <div className="space-y-6 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
+                             {timelineLogs.map((log) => (
+                                 <div key={log.id} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                                     <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white bg-slate-100 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10 text-slate-500">
+                                         {log.log_type === 'STATUS_CHANGE' ? <ListTodo size={16}/> : <MessageSquare size={16}/>}
+                                     </div>
+                                     <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+                                         <div className="flex items-center justify-between space-x-2 mb-1">
+                                             <div className="font-bold text-slate-900 text-sm">{log.log_type.replace(/_/g, ' ')}</div>
+                                             <time className="font-mono text-xs text-slate-400">{new Date(log.created_at).toLocaleString()}</time>
+                                         </div>
+                                         <div className="text-slate-600 text-sm">
+                                             {log.message}
+                                         </div>
+                                     </div>
+                                 </div>
+                             ))}
+                          </div>
+                      )}
+                  </div>
+
+                  {/* Manual Status Input (Only shown if active job) */}
+                  <div className="p-4 bg-white border-t">
+                      <form onSubmit={submitManualStatusUpdate} className="flex gap-2">
+                          <input 
+                              type="text" 
+                              className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                              placeholder="Type a progress update (e.g., 'Cutting started')..."
+                              value={statusUpdateText}
+                              onChange={e => setStatusUpdateText(e.target.value)}
+                          />
+                          <button 
+                              type="submit" 
+                              disabled={!statusUpdateText.trim()}
+                              className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                          >
+                              <Send size={16}/>
+                          </button>
+                      </form>
+                      <p className="text-xs text-slate-400 mt-2 px-1">
+                          Updates entered here will be visible to Admin HQ in real-time.
+                      </p>
                   </div>
               </div>
           </div>

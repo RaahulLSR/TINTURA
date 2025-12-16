@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { fetchBarcodes, bulkUpdateBarcodeStatusBySerial, fetchBarcodesBySerialList } from '../services/db';
-import { Barcode, BarcodeStatus } from '../types';
-import { Boxes, ScanLine, Save, Trash2, CheckCircle2, AlertTriangle, XOctagon, X, Search } from 'lucide-react';
+import { fetchBarcodes, commitBarcodesToStock, fetchBarcodesBySerialList, fetchStockCommits, fetchBarcodesByCommit } from '../services/db';
+import { Barcode, BarcodeStatus, StockCommit } from '../types';
+import { Boxes, ScanLine, Save, Trash2, CheckCircle2, AlertTriangle, XOctagon, X, Search, History, Printer, List } from 'lucide-react';
 
 interface StagedItem {
     serial: string;
@@ -18,8 +18,12 @@ interface ReportData {
 }
 
 export const InventoryDashboard: React.FC = () => {
+    // Tab State
+    const [activeTab, setActiveTab] = useState<'scan' | 'history'>('scan');
+
     // Inventory State
     const [inventory, setInventory] = useState<Barcode[]>([]);
+    const [commits, setCommits] = useState<StockCommit[]>([]);
     
     // Staging State
     const [scanInput, setScanInput] = useState("");
@@ -31,12 +35,17 @@ export const InventoryDashboard: React.FC = () => {
 
     // Load actual inventory
     const loadInventory = () => fetchBarcodes(BarcodeStatus.COMMITTED_TO_STOCK).then(setInventory);
-    useEffect(() => { loadInventory(); }, []);
+    const loadHistory = () => fetchStockCommits().then(setCommits);
+
+    useEffect(() => { 
+        loadInventory(); 
+        if (activeTab === 'history') loadHistory();
+    }, [activeTab]);
 
     // Focus input on load and after actions
     useEffect(() => {
-        inputRef.current?.focus();
-    }, [stagedItems, reportData]);
+        if (activeTab === 'scan') inputRef.current?.focus();
+    }, [stagedItems, reportData, activeTab]);
 
     const handleScan = async (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
@@ -106,7 +115,7 @@ export const InventoryDashboard: React.FC = () => {
         // 1. Commit valid items
         if (toCommit.length > 0) {
             const serials = toCommit.map(i => i.serial);
-            await bulkUpdateBarcodeStatusBySerial(serials, BarcodeStatus.COMMITTED_TO_STOCK);
+            await commitBarcodesToStock(serials);
             await loadInventory();
         }
 
@@ -119,6 +128,69 @@ export const InventoryDashboard: React.FC = () => {
         
         // 3. Clear Stage
         setStagedItems([]);
+    };
+
+    // --- PRINTING UTILS ---
+
+    const printReceipt = (title: string, ref: string, date: string, items: {desc: string, qty: number}[]) => {
+        const win = window.open('', 'Receipt', 'width=400,height=600');
+        if (win) {
+            win.document.write(`
+                <html>
+                <head>
+                    <title>${title}</title>
+                    <style>
+                        body { font-family: 'Courier New', monospace; padding: 20px; font-size: 14px; text-align: center; }
+                        .header { font-weight: bold; font-size: 1.2rem; margin-bottom: 10px; border-bottom: 2px dashed #000; padding-bottom: 10px; }
+                        .meta { text-align: left; margin-bottom: 20px; font-size: 12px; }
+                        table { width: 100%; text-align: left; border-collapse: collapse; margin-top: 10px; }
+                        th { border-bottom: 1px solid #000; padding: 4px; }
+                        td { padding: 4px; border-bottom: 1px dashed #ccc; }
+                        .total { font-weight: bold; margin-top: 20px; border-top: 1px solid #000; padding-top: 5px; }
+                    </style>
+                </head>
+                <body>
+                    <div class="header">TINTURA SST<br/>${title.toUpperCase()}</div>
+                    <div class="meta">
+                        Ref: ${ref}<br/>
+                        Date: ${date}
+                    </div>
+                    <table>
+                        <thead><tr><th>Item / Desc</th><th style="text-align:right">Qty</th></tr></thead>
+                        <tbody>
+                            ${items.map(i => `<tr><td>${i.desc}</td><td style="text-align:right">${i.qty}</td></tr>`).join('')}
+                        </tbody>
+                    </table>
+                    <div class="total">TOTAL ITEMS: ${items.reduce((a,b) => a + b.qty, 0)}</div>
+                    <script>window.print(); setTimeout(() => window.close(), 500);</script>
+                </body>
+                </html>
+            `);
+            win.document.close();
+        }
+    };
+
+    const handlePrintCommit = async (commit: StockCommit) => {
+        const items = await fetchBarcodesByCommit(commit.id);
+        const aggregated = items.reduce((acc, b) => {
+            const key = `${b.style_number} (${b.size})`;
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+        }, {} as Record<string, number>);
+        
+        const rows = Object.entries(aggregated).map(([desc, qty]) => ({ desc, qty: qty as number }));
+        printReceipt("Stock Commit Log", `COMMIT-#${commit.id}`, new Date(commit.created_at).toLocaleString(), rows);
+    };
+
+    const handlePrintAllStock = () => {
+        const aggregated = inventory.reduce((acc, b) => {
+            const key = `${b.style_number} - ${b.size}`;
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+        }, {} as Record<string, number>);
+        
+        const rows = Object.entries(aggregated).map(([desc, qty]) => ({ desc, qty: qty as number }));
+        printReceipt("Current Inventory Report", `FULL-STOCK`, new Date().toLocaleString(), rows);
     };
 
     // Helper for status icon
@@ -153,11 +225,39 @@ export const InventoryDashboard: React.FC = () => {
 
     return (
         <div className="space-y-6 h-[calc(100vh-100px)] flex flex-col">
-            <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                <Boxes className="text-indigo-600"/> Inventory In-Scan
-            </h2>
+            <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                    <Boxes className="text-indigo-600"/> Inventory Management
+                </h2>
+                
+                <div className="flex gap-2">
+                     <div className="bg-white p-1 rounded-lg border border-slate-200 shadow-sm flex">
+                        <button 
+                            onClick={() => setActiveTab('scan')}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                                activeTab === 'scan' 
+                                ? 'bg-indigo-600 text-white shadow-sm' 
+                                : 'text-slate-500 hover:bg-slate-50'
+                            }`}
+                        >
+                            <ScanLine size={16}/> Scanner
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('history')}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                                activeTab === 'history' 
+                                ? 'bg-indigo-600 text-white shadow-sm' 
+                                : 'text-slate-500 hover:bg-slate-50'
+                            }`}
+                        >
+                            <History size={16}/> Commit History
+                        </button>
+                    </div>
+                </div>
+            </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 overflow-hidden">
+            {activeTab === 'scan' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 overflow-hidden animate-fade-in">
                 {/* LEFT: Scanning Station */}
                 <div className="lg:col-span-2 flex flex-col gap-4 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                     {/* Input Area */}
@@ -248,8 +348,11 @@ export const InventoryDashboard: React.FC = () => {
 
                 {/* RIGHT: Current Stock View (Compact) */}
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden h-full">
-                    <div className="p-4 border-b bg-slate-50 font-bold text-slate-700">
-                        Current Inventory
+                    <div className="p-4 border-b bg-slate-50 font-bold text-slate-700 flex justify-between items-center">
+                        <span>Current Inventory</span>
+                        <button onClick={handlePrintAllStock} className="text-slate-500 hover:text-indigo-600" title="Print Inventory Report">
+                            <Printer size={18} />
+                        </button>
                     </div>
                     <div className="flex-1 overflow-y-auto">
                         <table className="w-full text-left">
@@ -277,6 +380,48 @@ export const InventoryDashboard: React.FC = () => {
                     </div>
                 </div>
             </div>
+            )}
+
+            {activeTab === 'history' && (
+                <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in flex flex-col">
+                    <div className="p-4 border-b bg-slate-50 font-bold text-slate-700 flex items-center gap-2">
+                        <History size={18}/> Stock Commitment Logs
+                    </div>
+                    <div className="flex-1 overflow-auto">
+                        {commits.length === 0 ? (
+                            <div className="p-12 text-center text-slate-400">No commit history found.</div>
+                        ) : (
+                            <table className="w-full text-left">
+                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase sticky top-0">
+                                    <tr>
+                                        <th className="p-4">Date</th>
+                                        <th className="p-4">Commit ID</th>
+                                        <th className="p-4">Items Added</th>
+                                        <th className="p-4 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {commits.map(commit => (
+                                        <tr key={commit.id} className="hover:bg-slate-50">
+                                            <td className="p-4 text-slate-700">{new Date(commit.created_at).toLocaleString()}</td>
+                                            <td className="p-4 font-mono text-sm text-slate-500">#{commit.id}</td>
+                                            <td className="p-4 font-bold text-green-600">+{commit.total_items}</td>
+                                            <td className="p-4 text-right">
+                                                <button 
+                                                    onClick={() => handlePrintCommit(commit)}
+                                                    className="inline-flex items-center gap-2 px-3 py-1.5 border border-slate-200 rounded text-sm text-slate-600 hover:bg-white hover:text-indigo-600 shadow-sm"
+                                                >
+                                                    <Printer size={14}/> Receipt
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* REPORT MODAL */}
             {reportData && (

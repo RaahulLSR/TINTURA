@@ -87,6 +87,30 @@ export interface MaterialRequest {
   created_at: string;
 }
 
+export interface MaterialApproval {
+    id: number;
+    request_id: string;
+    qty_approved: number;
+    created_at: string;
+    approved_by_name?: string;
+}
+
+export interface OrderLog {
+    id: number;
+    order_id: string;
+    log_type: 'STATUS_CHANGE' | 'MANUAL_UPDATE' | 'CREATION';
+    message: string;
+    created_at: string;
+    created_by_name?: string;
+}
+
+export interface StockCommit {
+  id: number;
+  created_at: string;
+  total_items: number;
+  note?: string;
+}
+
 export interface Barcode {
   id: string;
   barcode_serial: string;
@@ -94,6 +118,8 @@ export interface Barcode {
   style_number: string;
   size?: string;
   status: BarcodeStatus;
+  invoice_id?: string; // Linked Invoice
+  commit_id?: number; // Linked Stock Commit
 }
 
 export interface Invoice {

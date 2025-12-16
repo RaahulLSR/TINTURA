@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole } from '../types';
+import { Order, OrderStatus, MaterialRequest, Barcode, BarcodeStatus, Unit, MaterialStatus, Invoice, SizeBreakdown, AppUser, UserRole, StockCommit, MaterialApproval, OrderLog } from '../types';
 
 // --- MOCK DATA FALLBACKS ---
 
@@ -42,11 +42,18 @@ let MOCK_REQUESTS: MaterialRequest[] = [
   { id: '101', order_id: '1', material_content: 'Blue Thread (50 spools)', quantity_requested: 50, quantity_approved: 0, status: MaterialStatus.PENDING, created_at: new Date().toISOString() }
 ];
 
+// Mock for logs/approvals to prevent crash if DB tables missing
+let MOCK_LOGS: OrderLog[] = [];
+let MOCK_APPROVALS: MaterialApproval[] = [];
+
 let MOCK_BARCODES: Barcode[] = [
   { id: 'b1', barcode_serial: 'ORD-10001;ST-500;M;100001', order_id: '1', style_number: 'ST-500', size: 'M', status: BarcodeStatus.PUSHED_OUT_OF_SUBUNIT },
   { id: 'b2', barcode_serial: 'ORD-10001;ST-500;L;100002', order_id: '1', style_number: 'ST-500', size: 'L', status: BarcodeStatus.PUSHED_OUT_OF_SUBUNIT },
   { id: 'b3', barcode_serial: 'ORD-10001;ST-500;S;100003', order_id: '1', style_number: 'ST-500', size: 'S', status: BarcodeStatus.GENERATED },
 ];
+
+let MOCK_COMMITS: StockCommit[] = [];
+let MOCK_INVOICES: Invoice[] = [];
 
 // --- AUTHENTICATION ---
 
@@ -77,7 +84,39 @@ export const authenticateUser = async (username: string, password: string): Prom
     };
 };
 
-// --- API FUNCTIONS ---
+// --- TIMELINE / LOGS FUNCTIONS ---
+
+export const fetchOrderLogs = async (orderId?: string): Promise<OrderLog[]> => {
+    let query = supabase.from('order_logs').select('*').order('created_at', { ascending: false });
+    if (orderId) query = query.eq('order_id', orderId);
+    
+    const { data, error } = await query;
+    if (error || !data) {
+        return orderId ? MOCK_LOGS.filter(l => l.order_id === orderId) : MOCK_LOGS;
+    }
+    return data as OrderLog[];
+};
+
+export const addOrderLog = async (orderId: string, type: 'STATUS_CHANGE' | 'MANUAL_UPDATE' | 'CREATION', message: string) => {
+    const { error } = await supabase.from('order_logs').insert([{
+        order_id: orderId,
+        log_type: type,
+        message: message,
+        created_by_name: 'System' // In real app, pass user context
+    }]);
+
+    if (error) {
+        MOCK_LOGS.unshift({
+            id: Date.now(),
+            order_id: orderId,
+            log_type: type,
+            message,
+            created_at: new Date().toISOString()
+        });
+    }
+};
+
+// --- ORDER FUNCTIONS ---
 
 export const fetchUnits = async (): Promise<Unit[]> => {
     const { data, error } = await supabase.from('units').select('*').order('id');
@@ -97,9 +136,7 @@ export const fetchOrders = async (): Promise<Order[]> => {
   return data as Order[];
 };
 
-// Updated Create Order to handle attachments
 export const createOrder = async (order: Partial<Order>): Promise<Order | null> => {
-    // Supabase will handle order_no generation via Sequence and Default value
     const { data, error } = await supabase.from('orders').insert([{
         unit_id: order.unit_id,
         style_number: order.style_number,
@@ -124,12 +161,17 @@ export const createOrder = async (order: Partial<Order>): Promise<Order | null> 
             last_barcode_serial: 0
         } as Order;
         MOCK_ORDERS.push(newOrder);
+        // Log Mock
+        addOrderLog(newOrder.id, 'CREATION', 'Order Created and Assigned');
         return newOrder;
+    }
+    
+    if (data) {
+        await addOrderLog(data.id, 'CREATION', 'Order Created and Assigned');
     }
     return data;
 };
 
-// Updated to handle completion data
 export const updateOrderStatus = async (
     orderId: string, 
     status: OrderStatus, 
@@ -145,6 +187,10 @@ export const updateOrderStatus = async (
 
    const { error } = await supabase.from('orders').update(payload).eq('id', orderId);
    
+   // Log the status change
+   const logMsg = notes ? `Status changed to ${status}. Note: ${notes}` : `Status changed to ${status}`;
+   await addOrderLog(orderId, 'STATUS_CHANGE', logMsg);
+
    if (error) {
        console.warn("Update Failed (Using Mock):", error.message);
        MOCK_ORDERS = MOCK_ORDERS.map(o => {
@@ -160,6 +206,8 @@ export const updateOrderStatus = async (
        });
    }
 };
+
+// --- MATERIAL FUNCTIONS ---
 
 export const fetchMaterialRequests = async (): Promise<MaterialRequest[]> => {
     const { data, error } = await supabase.from('material_requests').select('*').order('created_at', { ascending: false });
@@ -185,14 +233,33 @@ export const createMaterialRequest = async (req: Partial<MaterialRequest>) => {
     }
 };
 
-export const approveMaterialRequest = async (id: string, qtyApproved: number, status: MaterialStatus) => {
+export const fetchMaterialApprovals = async (requestId: string): Promise<MaterialApproval[]> => {
+    const { data, error } = await supabase.from('material_approvals').select('*').eq('request_id', requestId).order('created_at', { ascending: true });
+    if (error || !data) return MOCK_APPROVALS.filter(a => a.request_id === requestId);
+    return data as MaterialApproval[];
+};
+
+export const approveMaterialRequest = async (id: string, qtyApprovedNow: number, currentTotalApproved: number, newStatus: MaterialStatus) => {
+    // 1. Insert detailed approval record
+    const { error: appError } = await supabase.from('material_approvals').insert([{
+        request_id: id,
+        qty_approved: qtyApprovedNow,
+        approved_by_name: 'Materials Dept'
+    }]);
+
+    if (appError) {
+        MOCK_APPROVALS.push({ id: Date.now(), request_id: id, qty_approved: qtyApprovedNow, created_at: new Date().toISOString() });
+    }
+
+    // 2. Update parent request total
+    const finalTotal = currentTotalApproved + qtyApprovedNow;
     const { error } = await supabase.from('material_requests').update({ 
-        quantity_approved: qtyApproved, 
-        status 
+        quantity_approved: finalTotal, 
+        status: newStatus 
     }).eq('id', id);
 
     if (error) {
-        MOCK_REQUESTS = MOCK_REQUESTS.map(r => r.id === id ? { ...r, quantity_approved: qtyApproved, status } : r);
+        MOCK_REQUESTS = MOCK_REQUESTS.map(r => r.id === id ? { ...r, quantity_approved: finalTotal, status: newStatus } : r);
     }
 };
 
@@ -264,39 +331,119 @@ export const generateBarcodes = async (orderId: string, count: number, style: st
     return data as Barcode[];
 };
 
+// --- STOCK COMMIT LOGIC ---
+
+export const commitBarcodesToStock = async (serials: string[]) => {
+    // 1. Create Stock Commit Record
+    const { data: commitData, error: commitError } = await supabase
+        .from('stock_commits')
+        .insert([{ total_items: serials.length }])
+        .select()
+        .single();
+    
+    let commitId = 0;
+
+    if (commitError) {
+        console.warn("Commit Record Failed (Using Mock)", commitError.message);
+        commitId = Date.now();
+        MOCK_COMMITS.push({ id: commitId, total_items: serials.length, created_at: new Date().toISOString() });
+    } else {
+        commitId = commitData.id;
+    }
+
+    // 2. Update Barcodes
+    const { error: updateError } = await supabase
+        .from('barcodes')
+        .update({ 
+            status: BarcodeStatus.COMMITTED_TO_STOCK,
+            commit_id: commitId
+        })
+        .in('barcode_serial', serials);
+
+    if (updateError) {
+        console.warn("Barcode Update Failed (Using Mock)");
+        MOCK_BARCODES = MOCK_BARCODES.map(b => serials.includes(b.barcode_serial) ? { ...b, status: BarcodeStatus.COMMITTED_TO_STOCK, commit_id: commitId } : b);
+    }
+};
+
+export const fetchStockCommits = async (): Promise<StockCommit[]> => {
+    const { data, error } = await supabase.from('stock_commits').select('*').order('created_at', { ascending: false });
+    if (error || !data) return MOCK_COMMITS;
+    return data as StockCommit[];
+};
+
+export const fetchBarcodesByCommit = async (commitId: number): Promise<Barcode[]> => {
+    const { data, error } = await supabase.from('barcodes').select('*').eq('commit_id', commitId);
+    if (error || !data) return MOCK_BARCODES.filter(b => b.commit_id === commitId);
+    return data as Barcode[];
+};
+
 export const bulkUpdateBarcodeStatusBySerial = async (serials: string[], status: BarcodeStatus) => {
+    // Deprecated in favor of commitBarcodesToStock for Stock Commits, but kept for general use
     const { error } = await supabase.from('barcodes').update({ status }).in('barcode_serial', serials);
     if (error) {
          MOCK_BARCODES = MOCK_BARCODES.map(b => serials.includes(b.barcode_serial) ? { ...b, status } : b);
     }
 }
 
-export const createInvoice = async (customerName: string, barcodeIds: string[], customInvoiceNo?: string): Promise<Invoice> => {
-    await supabase.from('barcodes').update({ status: BarcodeStatus.SOLD }).in('id', barcodeIds);
+// --- INVOICE / SALES LOGIC ---
 
+export const fetchInvoices = async (): Promise<Invoice[]> => {
+    const { data, error } = await supabase.from('invoices').select('*').order('created_at', { ascending: false });
+    if (error || !data) return MOCK_INVOICES;
+    return data as Invoice[];
+};
+
+export const fetchInvoiceItems = async (invoiceId: string): Promise<Barcode[]> => {
+    const { data, error } = await supabase.from('barcodes').select('*').eq('invoice_id', invoiceId);
+    if (error || !data) return MOCK_BARCODES.filter(b => b.invoice_id === invoiceId);
+    return data as Barcode[];
+}
+
+export const createInvoice = async (customerName: string, barcodeIds: string[], customInvoiceNo?: string): Promise<Invoice> => {
     const invoiceNo = customInvoiceNo || `INV-${Date.now()}`;
     const amount = barcodeIds.length * 25.00;
 
-    const { data, error } = await supabase.from('invoices').insert([{
+    // 1. Create Invoice
+    const { data: invData, error: invError } = await supabase.from('invoices').insert([{
         invoice_no: invoiceNo,
         customer_name: customerName,
         total_amount: amount
     }]).select().single();
 
-    if (error) {
-        console.warn("Invoice Create Failed (Using Mock):", error.message);
-        const inv = {
-            id: Math.random().toString(),
+    let invoiceId = '';
+    let newInvoice: Invoice;
+
+    if (invError) {
+        console.warn("Invoice Create Failed (Using Mock):", invError.message);
+        invoiceId = Math.random().toString();
+        newInvoice = {
+            id: invoiceId,
             invoice_no: invoiceNo,
             customer_name: customerName,
             total_amount: amount,
             created_at: new Date().toISOString()
         };
-        MOCK_BARCODES = MOCK_BARCODES.map(b => barcodeIds.includes(b.id) ? { ...b, status: BarcodeStatus.SOLD } : b);
-        return inv;
+        MOCK_INVOICES.unshift(newInvoice); // Add to beginning
+    } else {
+        newInvoice = invData as Invoice;
+        invoiceId = newInvoice.id;
     }
 
-    return data as Invoice;
+    // 2. Link Barcodes to Invoice and mark SOLD
+    const { error: updateError } = await supabase
+        .from('barcodes')
+        .update({ 
+            status: BarcodeStatus.SOLD, 
+            invoice_id: invoiceId 
+        })
+        .in('id', barcodeIds);
+
+    if (updateError) {
+         MOCK_BARCODES = MOCK_BARCODES.map(b => barcodeIds.includes(b.id) ? { ...b, status: BarcodeStatus.SOLD, invoice_id: invoiceId } : b);
+    }
+
+    return newInvoice;
 };
 
 // NEW FUNCTION: Upload file to storage
