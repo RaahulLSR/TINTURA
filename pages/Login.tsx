@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layers, Lock, User, ArrowRight, Loader2 } from 'lucide-react';
@@ -49,7 +50,7 @@ export const Login: React.FC = () => {
                  <div className="bg-gradient-to-br from-indigo-500 to-cyan-500 p-3 rounded-xl shadow-lg shadow-indigo-900/50">
                     <Layers size={32} strokeWidth={2.5} />
                  </div>
-                 <h1 className="text-3xl font-bold tracking-tight">Tintura <span className="text-indigo-400">SST</span></h1>
+                 <h1 className="text-3xl font-bold tracking-tight">Tintura <span className="text-indigo-400 italic">SST</span></h1>
             </div>
             <p className="text-slate-400 text-lg leading-relaxed">
               Advanced Manufacturing Execution System. <br/>

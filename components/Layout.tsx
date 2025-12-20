@@ -1,3 +1,4 @@
+
 import React, { useState, createContext, useContext, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { UserRole, AppUser } from '../types';
@@ -126,11 +127,11 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-3">
                 <div className="bg-gradient-to-br from-indigo-500 to-cyan-500 p-2 rounded-lg text-white shadow-lg shadow-indigo-900/50">
-                    <Layers size={24} strokeWidth={2.5} />
+                    <Factory size={24} strokeWidth={2.5} />
                 </div>
                 <div>
                     <h1 className="text-xl font-bold leading-none tracking-tight text-white">
-                    Tintura <span className="text-indigo-400">SST</span>
+                    Tintura <span className="text-indigo-400 italic">SST</span>
                     </h1>
                 </div>
             </div>
@@ -180,7 +181,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                <Menu size={24} />
             </button>
             <span className="font-bold text-slate-800 flex items-center gap-2">
-                <Layers size={18} className="text-indigo-600"/> Tintura SST
+                <Layers size={18} className="text-indigo-600"/> Tintura <span className="italic text-indigo-600">SST</span>
             </span>
             <div className="w-6" /> 
         </header>

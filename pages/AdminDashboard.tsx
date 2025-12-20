@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { fetchOrders, fetchUnits, createOrder, fetchBarcodes, uploadOrderAttachment, fetchOrderLogs, updateOrderDetails, deleteOrderSafely } from '../services/db';
+import { fetchOrders, fetchUnits, createOrder, fetchBarcodes, uploadOrderAttachment, fetchOrderLogs, updateOrderDetails } from '../services/db';
 import { Order, Unit, OrderStatus, BarcodeStatus, SizeBreakdown, OrderLog, Attachment } from '../types';
 import { StatusBadge } from '../components/Widgets';
 import { PlusCircle, RefreshCw, Package, Activity, Trash2, Plus, Eye, X, Upload, FileText, Download, BarChart3, PieChart, Calendar, Filter, ArrowUpRight, TrendingUp, Clock, List, MessageSquare, AlertTriangle, AlertOctagon, CheckCircle2, ChevronDown, ChevronUp, Pencil, Save, Archive, Search, ArrowLeftRight, Paperclip } from 'lucide-react';
@@ -224,19 +224,6 @@ export const AdminDashboard: React.FC = () => {
     loadData(); 
   };
 
-  const handleDeleteOrder = async (e: React.MouseEvent, orderId: string) => {
-      e.stopPropagation();
-      if (confirm('Are you sure you want to delete this order? This action will archive all data but cannot be undone easily.')) {
-          const result = await deleteOrderSafely(orderId);
-          if (result.success) {
-              alert(result.message);
-              loadData();
-          } else {
-              alert(`Error: ${result.message}`);
-          }
-      }
-  };
-
   // --- EDIT ORDER LOGIC ---
   const handleEditClick = () => {
     if (!detailsModal) return;
@@ -443,20 +430,13 @@ export const AdminDashboard: React.FC = () => {
                         <td className="p-4 text-slate-600">{order.quantity}</td>
                         <td className="p-4 text-slate-600">{order.target_delivery_date}</td>
                         <td className="p-4"><StatusBadge status={order.status} /></td>
-                        <td className="p-4 text-right flex items-center justify-end gap-1">
+                        <td className="p-4 text-right">
                             <button 
                                 onClick={() => setDetailsModal(order)}
                                 className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition"
                                 title="View Details"
                             >
                                 <Eye size={18}/>
-                            </button>
-                            <button 
-                                onClick={(e) => handleDeleteOrder(e, order.id)}
-                                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition"
-                                title="Delete Order"
-                            >
-                                <Trash2 size={18}/>
                             </button>
                         </td>
                         </tr>
@@ -512,7 +492,6 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                 </div>
                 
-                {/* ... (Existing Modal Content) ... */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                     {/* Basic Info */}
                     <div className="grid grid-cols-2 gap-4 text-sm">
@@ -549,7 +528,6 @@ export const AdminDashboard: React.FC = () => {
                         )}
                     </div>
                     
-                    {/* ... (Rest of existing modal code) ... */}
                     {/* TIMELINE SECTION INSIDE MODAL (Only when not editing) */}
                     {!isEditing && (
                         <div className="bg-indigo-50/50 rounded-xl border border-indigo-100 p-4">
@@ -765,7 +743,6 @@ export const AdminDashboard: React.FC = () => {
                 </div>
                 
                 <form onSubmit={handleCreateOrder} className="flex-1 overflow-y-auto p-6 space-y-4">
-                    {/* ... (Existing new order form content) ... */}
                     {/* Basic Fields */}
                     <div className="grid grid-cols-2 gap-4">
                         <div>
